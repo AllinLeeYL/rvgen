@@ -1,0 +1,70 @@
+
+
+# HartAttack Fuzzer Configuration
+
+[instruction_weights]
+# These weights control the base probability of selecting different instruction
+# classes
+# Setting a field to 0 disables the class, so must not all be 0
+
+# Base instructions
+ALU = 0.1
+ALU64 = 0.1
+MULDIV = 0.1
+MULDIV64 = 0.1
+# Control Flow instructions
+JAL = 0.01
+JALR = 0.01
+BRANCH = 0.4
+# Memory instructions
+MEM = 0.5
+MEM64 = 0.5
+AMO = 0.0 # not supported, stores must be larger than loads
+AMO64 = 0.1
+FENCE = 0.1
+# FPU instructions (0.0 for toooba, 0.1 for the rest)
+MEMFPU = 0.0
+MEMFPUD = 0.0
+FPUFSM = 0.0
+FPU = 0.0
+FPU64 = 0.0
+FPUD = 0.0
+FPUD64 = 0.0
+# Fuzzer helper instructions
+REGFSM = 0.1
+TVECFSM = 0.1
+EPCFSM = 0.1
+FREE_POLLUTED = 5.0       # utility for MCM fuzzing
+CREATE_ADDR_DEP = 2.0     # utility for MCM fuzzing
+# Special event instructions
+MACHINE_CSR = 0.1
+EXCEPTION = 0.1
+RANDOM_CSR = 0.0
+DESCEND_PRV = 0.1
+# Interrupts, !! to disable IPI, also disable waiting !!
+WFI_TRAP = 0.7
+WFI_NOTRAP = 0.4
+SEND_IPI = 5.0
+SEND_LOCAL_INTERRUPT = 0
+CLEAR_INTERRUPT = 0.4
+# write an instruction during execution
+WRITE_INSTR = 0
+WAIT_FOR_INSTR = 0.0
+
+[exception_weights]
+# Exception Operation Type Initial Boosters
+# These weights control the probability of generating different exception types
+ID_INSTR_ADDR_MISALIGNED = 1.0
+ID_INSTR_ACCESS_FAULT = 0.0
+ID_ILLEGAL_INSTRUCTION = 1.0
+ID_BREAKPOINT = 0.1
+ID_LOAD_ADDR_MISALIGNED = 1.0
+ID_LOAD_ACCESS_FAULT = 0.0
+ID_STORE_AMO_ADDR_MISALIGNED = 1.0
+ID_STORE_AMO_ACCESS_FAULT = 0.0
+ID_ENVIRONMENT_CALL_FROM_U_MODE = 0.1
+ID_ENVIRONMENT_CALL_FROM_S_MODE = 0.1
+ID_ENVIRONMENT_CALL_FROM_M_MODE = 0.1
+ID_INSTRUCTION_PAGE_FAULT = 0.0
+ID_LOAD_PAGE_FAULT = 0.0
+ID_STORE_AMO_PAGE_FAULT = 0.0

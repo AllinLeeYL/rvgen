@@ -1,0 +1,16 @@
+{
+    "misaligned_data_supported": false,
+    "privlvs": "msu",
+    "mmu": "sv39,sv48",
+    "marchflags": "-march=rv64gc -mabi=lp64",
+    "bootaddr": "0x80000000",
+    "simname": "chipyard.harness.TestHarness.MyTrippleBoomV3ConfigLog",
+    "hartids": [0, 1],
+    "corename": "boom",
+    "wfi_u_mode": false,
+    "simulator": "chipyard",
+    "medeleg": "0xb15d",
+    "mideleg": "0x222",
+    "clint": "0x2000000",
+    "rvext": []
+}
