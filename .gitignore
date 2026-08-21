@@ -219,3 +219,8 @@ __marimo__/
 
 # VSCode
 .vscode/
+
+# Generated files
+elfs/
+litmus/
+dbgcmds/

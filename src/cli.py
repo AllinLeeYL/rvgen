@@ -2,6 +2,7 @@ import argparse
 from proggen import TestCaseGenerator
 from params import TestParams
 from genelf import genelf
+from preisasim.spikeresolution import spike_resolution
 import random
 
 def parse_bool(val):
@@ -11,11 +12,11 @@ def parse_argument():
     parser = argparse.ArgumentParser(description='RISC-V instruction generator')
     parser.add_argument('--size', type=int, default=256,
                         help='Program size / instruction number')
-    parser.add_argument("--memsize", type=int, default=4096, 
+    parser.add_argument("--memsize", type=int, default=4096,
                         help="Size of the memory in bytes")
-    parser.add_argument("--num-cores", type=int, default=1, 
+    parser.add_argument("--num-cores", type=int, default=1,
                         help="Number of cores allocated to fuzzing")
-    parser.add_argument("--num-bbs", type=int, default=12, 
+    parser.add_argument("--num-bbs", type=int, default=12,
                         help="Maximium number of basic blocks")
     parser.add_argument("--seed", type=int, default=0, metavar="SEED",
                         help="Fuzzes a single elf, given its random seed")
@@ -36,6 +37,7 @@ def main():
     )
     generator = TestCaseGenerator(params)
     success = generator.gen_program(params)
+    generator.expected_regvals = spike_resolution(generator, params)
     genelf.gen_elf_from_bbs(generator, True, "test", params, False)
     # for core in generator.corestates.values():
     #     for bb in core.basic_blocks:
