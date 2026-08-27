@@ -1,12 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "rvgen"
 version = "0.1.0"
+description = "A standalone RISC-V instruction and test program generator"
+readme = "README.md"
+requires-python = ">=3.11"
 dependencies = [
-  "numpy>=1.8.0",
-  "onnx>=1.12.0",
-  "onnx-graphsurgeon>=0.5.0",
-  "torch>=2.0.0",
-  "pyelftools>=0.33",
+    "pyelftools>=0.30",
+    "numpy>=1.20.0",
+    "z3-solver>=4.12.0",
+]
+
+[project.scripts]
+rvgen = "rvgen.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "termcolor",
+    "tqdm",
 ]
 
 [tool.setuptools]
@@ -14,13 +29,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["rvgen*"]
 
-[project.scripts]
-rvgen = "cli:main"
-
-[project.optional-dependencies]
-dev = [
-  "torchinfo",
-  "termcolor",
-  "tqdm",
+[tool.setuptools.package-data]
+"rvgen" = [
+    "templates/*",
 ]
