@@ -3,7 +3,7 @@ import random
 import tomllib
 from pathlib import Path
 
-from rvgen.generator.Generator import Generator, GeneratorParams
+from rvgen.generator.generator import Generator, GeneratorParams
 
 
 def parse_bool(val):
@@ -71,7 +71,7 @@ def main():
     generatorParams = GeneratorParams()
     generator = Generator(generatorParams=generatorParams)
     generator.generate()
-    generator.write_assembly("output.s")
+    generator.gen_elf("./output.elf")
 
 
 if __name__ == "__main__":

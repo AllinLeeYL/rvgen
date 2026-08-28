@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from rvgen.generator.BasicBlockGenerator import BasicBlockGeneratorParams, BasicBlockGenerator
+from rvgen.generator.basicblockgenerator import BasicBlockGeneratorParams, BasicBlockGenerator
 
 @dataclass
 class CoreGeneratorParams:
@@ -18,3 +18,11 @@ class CoreGenerator:
     def generate(self):
         for i, bb in enumerate(self.bbs):
             bb.generate()
+
+    
+    def get_bytecode(self) -> bytes:
+        return b""
+
+    
+    def get_section_addr(self) -> int:
+        return 0

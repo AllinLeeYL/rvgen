@@ -4,7 +4,8 @@ from pathlib import Path
 import jinja2
 
 import rvgen.generator.config as config
-from rvgen.generator.CoreGenerator import CoreGenerator
+from rvgen.generator.coregenerator import CoreGenerator
+import rvgen.utils.elfbuilder as elfbuilder
 
 
 @dataclass
@@ -15,6 +16,8 @@ class GeneratorParams:
     num_bbs: int = 12
     seed: int = 0
     authorize_privileges: bool = True
+    is_64bit: bool = True
+    start_addr: int = 0x80000000
 
 
 class Generator:
@@ -34,12 +37,22 @@ class Generator:
         for i, core in enumerate(self.cores):
             core.generate()
 
-    def write_assembly(self, output_path: str | Path):
+    def gen_assembly(self, output_path: str | Path):
         env = jinja2.Environment(loader=jinja2.FileSystemLoader("templates"))
         template = env.get_template("riscv64.S.j2")
         with open(output_path, "w") as f:
             f.write(template.render(basic_blocks=self.cores[0].bbs))
         
+    
 
-    def write_elf(self, output_path: str | Path):
-        pass
+    def gen_elf(self, output_path: str | Path):
+        if len(self.cores) != 1:
+            raise Exception("Only one core is supported for now.")
+        bytecode = self.cores[0].get_bytecode()
+        elfbuilder.gen_elf(
+            inbytes=self.cores[0].get_bytecode(), 
+            start_addr=self.params.start_addr,
+            section_addr=self.cores[0].get_section_addr(),
+            destination_path=output_path,
+            is_64bit=self.params.is_64bit
+        )
