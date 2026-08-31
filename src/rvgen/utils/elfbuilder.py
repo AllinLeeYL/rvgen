@@ -23,7 +23,8 @@ _NUM_SHDRS = 4  # NULL, .shstrtab, .text
 class ElfSection:
     name: str
     inbytes: bytes
-    sec_addr: int = 0x0
+    addr: int = 0x0
+    flags: int = 0x6  # SHF_ALLOC | SHF_EXECINSTR
 
 
 

@@ -11,7 +11,10 @@ def parse_bool(val):
 
 
 def config_keys(parser):
-    """Return argument destinations that may be read from TOML."""
+    """
+    Return argument destinations that may be read from TOML.
+    For example, if the parser has an argument --size and --memsize, this function will return "size" and "memsize".
+    """
     return {
         action.dest
         for action in parser._actions
@@ -19,7 +22,11 @@ def config_keys(parser):
     }
 
 
-def load_config(path, parser):
+def load_config(path, parser) -> dict:
+    """
+    Load config from TOML file and validate keys. 
+    If path is None, return an empty dict.
+    """
     if path is None:
         return {}
 
@@ -48,6 +55,8 @@ def build_parser():
         type=parse_bool,
         default=True,
     )
+    parser.add_argument("--out", "-o", type=Path, default=Path("output.elf"),
+                        help="Output ELF file path")
 
     return parser
 
@@ -71,7 +80,7 @@ def main():
     generatorParams = GeneratorParams()
     generator = Generator(generatorParams=generatorParams)
     generator.generate()
-    generator.gen_elf("./output.elf")
+    generator.gen_elf(args.out)
 
 
 if __name__ == "__main__":

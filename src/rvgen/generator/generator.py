@@ -5,7 +5,7 @@ import jinja2
 
 import rvgen.generator.config as config
 from rvgen.generator.coregenerator import CoreGenerator
-import rvgen.utils.elfbuilder as elfbuilder
+from rvgen.utils.elfbuilder import ElfSection, ElfBuilder
 
 
 @dataclass
@@ -49,10 +49,11 @@ class Generator:
         if len(self.cores) != 1:
             raise Exception("Only one core is supported for now.")
         bytecode = self.cores[0].get_bytecode()
-        elfbuilder.gen_elf(
-            inbytes=self.cores[0].get_bytecode(), 
-            start_addr=self.params.start_addr,
-            section_addr=self.cores[0].get_section_addr(),
-            destination_path=output_path,
-            is_64bit=self.params.is_64bit
+        textSection = ElfSection(
+            name=".text",
+            inbytes=bytecode,
+            addr=0x0,
+            flags=0x6,  # SHF_ALLOC | SHF_EXECINSTR
         )
+        elfbuilder = ElfBuilder()
+        elfbuilder.build([textSection], is_64bit=self.params.is_64bit, start_addr=self.params.start_addr)
