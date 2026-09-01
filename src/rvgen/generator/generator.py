@@ -56,4 +56,5 @@ class Generator:
             flags=0x6,  # SHF_ALLOC | SHF_EXECINSTR
         )
         elfbuilder = ElfBuilder()
-        elfbuilder.build([textSection], is_64bit=self.params.is_64bit, start_addr=self.params.start_addr)
+        elf_bytes = elfbuilder.build([textSection], is_64bit=self.params.is_64bit, start_addr=self.params.start_addr)
+        elfbuilder.save(elf_bytes=elf_bytes, destination_path=output_path)
