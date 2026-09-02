@@ -1,9 +1,11 @@
+from jinja2 import async_utils
 from dataclasses import dataclass
 from rvgen.generator.basicblockgenerator import BasicBlockGeneratorParams, BasicBlockGenerator
 
 @dataclass
 class CoreGeneratorParams:
     num_bbs: int = 1
+    num_insts: int = 20
 
 
 class CoreGenerator:
@@ -11,6 +13,7 @@ class CoreGenerator:
         self.params = coreGeneratorParams
         self.bbs = [BasicBlockGenerator(
             BasicBlockGeneratorParams(
+                num_insts=self.params.num_insts,
                 label=f"bb_{i}",
             )
         ) for i, _ in enumerate(range(self.params.num_bbs))]

@@ -4,8 +4,8 @@ from pathlib import Path
 import jinja2
 
 import rvgen.generator.config as config
-from rvgen.generator.coregenerator import CoreGenerator
-from rvgen.utils.elfbuilder import ElfSection, ElfBuilder
+from rvgen.generator.coregenerator import CoreGenerator, CoreGeneratorParams
+from rvgen.utils.elfbuilder import ElfSection, ElfBuilder, SHF_ALLOC, SHF_EXECINSTR
 
 
 @dataclass
@@ -23,7 +23,9 @@ class GeneratorParams:
 class Generator:
     def __init__(self, generatorParams: GeneratorParams):
         self.params =generatorParams
-        self.cores = [CoreGenerator() for _ in range(self.params.num_cores)]
+        self.cores = [CoreGenerator(CoreGeneratorParams(num_bbs=self.params.num_bbs, 
+                        num_insts=self.params.size // self.params.num_cores,
+                        )) for _ in range(self.params.num_cores)]
         self._update_inst_weights()
 
     def _update_inst_weights(self):
@@ -42,7 +44,6 @@ class Generator:
         template = env.get_template("riscv64.S.j2")
         with open(output_path, "w") as f:
             f.write(template.render(basic_blocks=self.cores[0].bbs))
-        
     
 
     def gen_elf(self, output_path: str | Path):
@@ -53,7 +54,7 @@ class Generator:
             name=".text",
             inbytes=bytecode,
             addr=0x0,
-            flags=0x6,  # SHF_ALLOC | SHF_EXECINSTR
+            flags=SHF_ALLOC | SHF_EXECINSTR
         )
         elfbuilder = ElfBuilder()
         elf_bytes = elfbuilder.build([textSection], is_64bit=self.params.is_64bit, start_addr=self.params.start_addr)

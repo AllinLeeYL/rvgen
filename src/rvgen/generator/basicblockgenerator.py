@@ -30,7 +30,7 @@ class BasicBlockGenerator:
         """
         for i in range(self.params.num_insts):
             instCls = self._choose_inst(prng=prng)
-            print(ISAInstrClass(instCls).name)
+            # print(ISAInstrClass(instCls).name)
 
     def _choose_inst(self, prng: Random = Random()) -> ISAInstrClass:
         """

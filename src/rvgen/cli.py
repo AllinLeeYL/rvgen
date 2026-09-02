@@ -77,7 +77,7 @@ def parse_argument():
 def main():
     args = parse_argument()
 
-    generatorParams = GeneratorParams()
+    generatorParams = GeneratorParams(size=args.size)
     generator = Generator(generatorParams=generatorParams)
     generator.generate()
     generator.gen_elf(args.out)
