@@ -1,5 +1,5 @@
-from jinja2 import async_utils
 from dataclasses import dataclass
+import struct
 from rvgen.generator.basicblockgenerator import BasicBlockGeneratorParams, BasicBlockGenerator
 
 @dataclass
@@ -18,13 +18,14 @@ class CoreGenerator:
             )
         ) for i, _ in enumerate(range(self.params.num_bbs))]
 
-    def generate(self):
+    def generate(self, prng=None, weights=None):
         for i, bb in enumerate(self.bbs):
-            bb.generate()
+            bb.generate(prng, weights)
 
     
     def get_bytecode(self) -> bytes:
-        return b""
+        return b"".join(inst if isinstance(inst, bytes) else struct.pack('<I', inst)
+                        for bb in self.bbs for inst in bb.insts)
 
     
     def get_section_addr(self) -> int:

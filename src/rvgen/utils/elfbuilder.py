@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 import struct
 
 # Section flags
@@ -34,11 +33,59 @@ class ElfSection:
     addr: int = 0x0
     flags: int = SHF_ALLOC | SHF_EXECINSTR  # SHF_ALLOC | SHF_EXECINSTR
     align: int = 4
+    section_type: int = 1
+    link: int = 0
+    info: int = 0
+    entsize: int = 0
+
+
+@dataclass
+class ElfSymbol:
+    """Global symbol defined at an offset within a zero-based section index."""
+    name: str
+    section: int
+    offset: int = 0
+    size: int = 0
+    symbol_type: int = 1
     
 
 class ElfBuilder:
     def __init__(self) -> None:
         pass
+
+    def build_with_symbols(self, sections: list[ElfSection], symbols: list[ElfSymbol],
+                           is_64bit: bool = True, start_addr: int = 0x80000000) -> bytes:
+        sections = list(sections)
+        if any(section.name in {".strtab", ".symtab"} for section in sections):
+            raise ValueError("symbol table section names are reserved")
+        strings = bytearray(b"\0")
+        entry_size = 24 if is_64bit else 16
+        table = bytearray(entry_size)
+        names = set()
+        for symbol in symbols:
+            if (not symbol.name or not symbol.name.isascii() or "\0" in symbol.name
+                    or symbol.name in names or not 0 <= symbol.symbol_type <= 15):
+                raise ValueError("invalid or duplicate ELF symbol")
+            names.add(symbol.name)
+            if not 0 <= symbol.section < len(sections):
+                raise ValueError("invalid symbol section")
+            section = sections[symbol.section]
+            if min(symbol.offset, symbol.size) < 0 or symbol.offset + symbol.size > len(section.inbytes):
+                raise ValueError("symbol lies outside its section")
+            name_offset = len(strings)
+            strings.extend(symbol.name.encode("ascii") + b"\0")
+            value = section.addr + symbol.offset
+            if is_64bit:
+                table.extend(struct.pack('<IBBHQQ', name_offset, 0x10 | symbol.symbol_type,
+                                         0, symbol.section + 1, value, symbol.size))
+            else:
+                table.extend(struct.pack('<IIIBBH', name_offset, value, symbol.size,
+                                         0x10 | symbol.symbol_type, 0, symbol.section + 1))
+        string_index = len(sections) + 1
+        sections.append(ElfSection('.strtab', bytes(strings), flags=0, align=1, section_type=3))
+        sections.append(ElfSection('.symtab', bytes(table), flags=0, align=8 if is_64bit else 4,
+                                   section_type=2, link=string_index, info=1, entsize=entry_size))
+        return self.build(sections, is_64bit, start_addr)
 
     @staticmethod
     def _sh_flags_to_p_flags(sh_flags: int) -> int:
@@ -120,17 +167,17 @@ class ElfBuilder:
 
         for s, offset in zip(sections, section_offsets):
             sh_name = name_offsets[s.name]
-            sh_type = 1  # SHT_PROGBITS
+            sh_type = s.section_type
             size = len(s.inbytes)
             if is_64bit:
                 shdrs_bytes.extend(struct.pack(
                     '<IIQQQQIIQQ',
-                    sh_name, sh_type, s.flags, s.addr, offset, size, 0, 0, s.align, 0
+                    sh_name, sh_type, s.flags, s.addr, offset, size, s.link, s.info, s.align, s.entsize
                 ))
             else:
                 shdrs_bytes.extend(struct.pack(
                     '<IIIIIIIIII',
-                    sh_name, sh_type, s.flags, s.addr, offset, size, 0, 0, s.align, 0
+                    sh_name, sh_type, s.flags, s.addr, offset, size, s.link, s.info, s.align, s.entsize
                 ))
 
         # .shstrtab section header (index = len(sections) + 1)
