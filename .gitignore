@@ -17,3 +17,7 @@
 venv/
 __pycache__/
 .pypirc
+
+# executable files
+rvgen
+/bin/

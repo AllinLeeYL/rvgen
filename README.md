@@ -1,277 +1,220 @@
-# rvgen
+# rvgen in Go
 
-A standalone Go rewrite is available in [go/](go/README.md), with the library,
-CLI, instruction encoders, ELF runtime, and its own tests and build instructions.
-See the [Go design](go/DESIGN.md) for its simplified generation and output flow,
-and the [debug commands](go/README.md#debug) for Go and RISC-V debugging.
+A standalone Go rewrite of the Rust library and CLI. Go compiles to native machine
+code and includes a garbage collector, with no JVM or separate virtual machine.
+The `go` command handles builds, dependencies, formatting, and tests. There is one
+external dependency: the TOML parser, pinned in `go.mod` and verified by `go.sum`.
+No Rust compiler, Python, CMake, C compiler, or RISC-V assembler is needed.
 
-A self-contained Rust package with a library and an `rvgen` executable. Building
-and running it requires neither Python nor a RISC-V toolchain.
+The design uses one generator, plain core/block data, an instruction table, and
+functions for ELF output. See [DESIGN.md](DESIGN.md) for the data flow, invariants,
+and API changes from the initial rewrite.
 
-```sh
-cargo build --release --locked
-cargo run --release --locked -- --size 256 --seed 42 -o output.elf
-cargo run -- --help
-```
+## Build and run
 
-The executable emits a bare-metal ELF with `.text` loaded at its entry address
-(`0x80000000` by default). The runtime installs a machine-mode trap handler and
-writes `1` to `tohost` on normal completion. Traps write `3`, reporting failure
-instead of hanging. Writable, 64-byte-aligned `.tohost` and `.fromhost` sections
-contain 8-byte mailboxes; `.symtab` exposes the symbols Spike discovers. This
-works for RV32 and RV64.
+Install [Go 1.22 or newer](https://go.dev/doc/install). From the repository root:
 
 ```sh
-spike -m64 output.elf
+go build -o bin/rvgen ./cmd/rvgen # build
+go install ./cmd/rvgen # [optional] install
+./bin/rvgen --size 256 --seed 42 -o output.elf
+./bin/rvgen --config examples/config.toml --num-elfs 1000 --out-dir generated
+./bin/rvgen --help
 ```
 
-`generate()` now fills blocks with concrete instructions. The seed controls both
-weighted choices and their operands, so different seeds produce different ELF
-workloads. The default policy includes memory accesses and deliberate exceptions;
-these may reach the runtime's failure handler. `--size 0` emits only the runtime.
+Output defaults to `elfs/`; pass `--out-dir .` to write in the current directory.
+`-o` supplies the filename; `--out-dir` supplies its directory. For example,
+use `--out-dir /tmp/cases -o case.elf` to write `/tmp/cases/case.elf`.
 
-## Repository layout
+Install the executable into a local directory on your PATH (from `go/`):
+
+```sh
+export GOBIN="$HOME/go/bin"
+export PATH="$GOBIN:$PATH"
+mkdir -p $GOBIN
+go install ./cmd/rvgen
+rvgen --size 256 --seed 42
+```
+
+Add the PATH export to your shell configuration to keep it across sessions.
+
+For development, run directly with `go run ./cmd/rvgen --size 256`. The first
+build downloads the pinned TOML dependency; subsequent builds use Go's cache.
+You can copy this directory elsewhere and build it independently.
+
+## Debug
+
+To debug the Go generator, install [Delve](https://github.com/go-delve/delve/blob/master/Documentation/installation/README.md).
+With this workspace's Go 1.22 toolchain, use Delve v1.22.1; its
+[supported Go range](https://github.com/go-delve/delve/blob/v1.22.1/pkg/goversion/compat.go)
+includes Go 1.22. With a current Go toolchain, install `@latest` instead.
+All commands below run from `go/`:
+
+```sh
+GOBIN="$HOME/.local/bin" go install github.com/go-delve/delve/cmd/dlv@v1.22.1
+export PATH="$HOME/.local/bin:$PATH"
+dlv debug ./cmd/rvgen -- --size 16 --seed 42 --out-dir /tmp/rvgen-debug
+```
+
+At the Delve prompt:
 
 ```text
-src/
-  lib.rs                  Public library API
-  main.rs, cli.rs         Executable and CLI/config parsing
-  generator/
-    mod.rs                Generator orchestration and output
-    params.rs             Generator/core/block parameters and validation
-    program.rs            Core/block budgets, lowering, and selection records
-    policy.rs             Instruction/action choices and weights
-    lowering.rs           Operand generation and action sequences
-  riscv/
-    instruction.rs        Instruction table, kinds/classes, and encoding dispatch
-    encoding/             Bit-packing helpers grouped by ISA extension
-    registers.rs, ...     Registers and architectural metadata
-  elf.rs                  ELF sections, symbols, and file layout
-  runtime.rs              Bare-metal entry, trap handler, and HTIF exit
-examples/                 Explicit instruction program and CLI config
-templates/                Embedded assembly runtime template
-tests/                    Integration tests
-docs/legacy/              Historical configuration, not loaded by Rust
+break rvgen.(*Generator).Generate
+continue
+print g.Params
+next
+step
+locals
+stack
+continue
+quit
 ```
 
-## Generation policy
+[`dlv debug`](https://github.com/go-delve/delve/blob/master/Documentation/usage/dlv_debug.md)
+builds with optimizations disabled. To keep a separate debug binary:
 
-`Instruction` is a concrete ISA opcode with fully specified operands.
-`InstructionKind` is its operand-free identity, and `InstructionClass` groups
-kinds such as `Alu`, `Memory`, `Amo`, and `Float` for weighted selection. Kinds,
-class membership, operand construction, and encoding dispatch come from the same
-instruction macro/table; there is no second opcode list in the generator.
-
-`GenerationAction` contains high-level behavior only. `GenerationChoice` is
-`Instruction(InstructionClass)` or `Action(GenerationAction)`. The lowering path is:
-
-```text
-GenerationChoice
-  -> InstructionClass -> select InstructionKind -> generate typed operands
-  -> GenerationAction -> generate operands for a complete sequence
-  -> Vec<Instruction> -> block.insts -> encoding / assembly / ELF
+```sh
+go build -gcflags='all=-N -l' -o bin/rvgen-debug ./cmd/rvgen
+dlv exec ./bin/rvgen-debug -- --size 16 --seed 42 --out-dir /tmp/rvgen-debug
 ```
 
-`RegFsm` materializes a random signed 32-bit register value in two instructions;
-`CreateAddressDependency` emits a register copy followed by a load using that
-copy as its address. `Exception` emits ECALL or EBREAK. `FreePolluted` emits
-nothing because the current operand generator has no register-pollution
-bookkeeping to release. Other actions, including IPIs, privilege transitions,
-and self-modifying-code operations, require a future platform/state model.
-Enabling them returns an explicit error before sampling. Their default weights
-are zero, including for multiple cores.
+To inspect or debug the generated RISC-V program, use `readelf` and
+[Spike's interactive debugger](https://github.com/riscv-software-src/riscv-isa-sim#interactive-debug-mode).
+Start with the explicit arithmetic example, which completes successfully:
 
-[generator/policy.rs](src/generator/policy.rs) defines stable default weights.
-`Generator::choice_weights` holds per-instance overrides. Blocks record
-`selected_choices`, each with the range of instructions it emitted, including
-empty ranges for generator-only actions. Repeating `generate()` rebuilds the
-layout and workload from current parameters; failed generation retains the
-previous workload.
-
-```rust
-use rvgen::{Generator, GeneratorParams, InstructionClass};
-use rvgen::generator::{GenerationAction, GenerationChoice};
-
-let mut generator = Generator::new(GeneratorParams::default()).unwrap();
-generator.choice_weights = vec![
-    (GenerationChoice::Instruction(InstructionClass::Alu), 1.0),
-    (GenerationChoice::Action(GenerationAction::RegFsm), 0.1),
-];
-generator.generate().unwrap();
-assert_eq!(generator.cores[0].bbs.iter().map(|bb| bb.insts.len()).sum::<usize>(), 256);
+```sh
+go run ./examples/encode /tmp/rvgen-encoded.elf
+readelf -h -S -s /tmp/rvgen-encoded.elf
+spike -m64 /tmp/rvgen-encoded.elf
+spike -d -m64 /tmp/rvgen-encoded.elf
 ```
 
-The initial operand policy uses caller-saved integer/FP registers and encodable
-immediates, shift amounts, rounding modes, and atomic ordering bits. Branches and
-JAL target the following instruction. Memory bases and indirect jumps are not
-resolved against a platform memory map, so generated programs are not guaranteed
-to complete successfully. FP and atomic classes are opt-in and require their ISA
-extensions; enabling FP execution also requires appropriate machine state.
-Compressed instructions remain available for explicit construction. RV32 defaults
-disable RV64 families, and explicitly enabling one on RV32 is an error. Disabling
-`authorize_privileges` rejects the CSR class; it does not suppress ECALL/EBREAK.
+At Spike's prompt, press Enter to step, `reg 0 a0` to inspect a register,
+`r` to continue, or `q` to quit. Random workloads can intentionally trap;
+the runtime reports traps through `tohost` as failure.
 
-Library migration:
+## Library example
 
-| Previous API | Current API |
-| --- | --- |
-| `GenerationAction::Alu` (and other ISA families) | `GenerationChoice::Instruction(InstructionClass::Alu)` |
-| `GenerationAction::RandomCsr` | `GenerationChoice::Instruction(InstructionClass::Csr)` |
-| `GenerationAction::SendIpi` (and other behaviors) in weights | `GenerationChoice::Action(GenerationAction::SendIpi)` |
-| `policy::DEFAULT_ACTION_WEIGHTS` | `policy::DEFAULT_CHOICE_WEIGHTS` |
-| `Generator::action_weights` | `Generator::choice_weights` |
-| `BasicBlockGenerator::selected_actions` | `BasicBlockGenerator::selected_choices` with emitted instruction ranges |
-| Block/core `generate(rng, weights)` | `generate(rng, weights, &GenerationContext)` |
+```go
+p := rvgen.DefaultParams()
+p.Size = 100
+p.Seed = 42
 
-Existing low-level encoder paths under `rvgen::riscv` remain available through
-re-exports; their implementations now live under `riscv::encoding`.
-
-## Instruction representation
-
-[`Instruction`](src/riscv/instruction.rs) is an enum with named operands for all 196
-instruction encoders. Integer and floating-point registers use distinct `IntReg`
-and `FloatReg` types. A block stores `Vec<Instruction>`; encoding happens when
-emitting bytecode or assembly, so operand mutations cannot leave cached bytes
-out of date.
-
-```rust
-use rvgen::{Generator, GeneratorParams, Instruction};
-use rvgen::riscv::IntReg;
-
-let mut instruction = Instruction::Addi {
-    rd: IntReg::a0,
-    rs1: IntReg::zero,
-    imm: 6,
-};
-if let Instruction::Addi { imm, .. } = &mut instruction {
-    *imm = 42;
+g, err := rvgen.NewGenerator(p)
+if err != nil {
+    return err
 }
-assert_eq!(instruction.encode().bits(), 0x02a00513);
-assert_eq!(instruction.byte_len(), 4);
-
-let mut generator = Generator::new(GeneratorParams::default()).unwrap();
-generator.cores[0].bbs[0].insts.push(instruction);
-generator.gen_elf("answer.elf").unwrap();
+if err := g.Generate(); err != nil {
+    return err
+}
+return g.GenELF("program.elf")
 ```
 
-This keeps three responsibilities distinct:
+Instructions are ordinary structs with editable fields:
 
-- `Instruction` stores the opcode and its operands. Its `encode()` method
-  dispatches to the pure bit-packing functions under `riscv::encoding`.
-- `EncodedInstruction` represents a 32-bit word or 16-bit halfword and writes
-  little-endian bytes. Assembly rendering uses `.4byte`/`.2byte` directives to
-  preserve the same bits and widths without assembler relaxation.
-- Fuzzer-specific state, such as hart IDs, event IDs, observed addresses, and
-  coverage, belongs in the generator or a separate record that owns an
-  `Instruction`. Encoding does not depend on simulation state.
+```go
+inst := riscv.Instruction{
+    Kind: riscv.Addi,
+    Rd:   riscv.A0,
+    Rs1:  riscv.Zero,
+    Imm:  42,
+}
+word := inst.Encode().Bits // 0x02a00513
+inst.Imm = 7             // Encoding always uses the current operands.
+```
 
-An enum lets mutation code match instruction kinds and edit their actual
-operands, without a class hierarchy, heap allocation per instruction, or string
-opcode dispatch. A single declaration table connects each variant to its
-encoder, width, canonical mnemonic, and optional sampling class. `kind()`,
-`class()`, `mnemonic()`, and
-`syntactic_dependency()` expose existing static metadata; they do not construct
-a dynamic dependency graph or check RVWMO executions.
+`Rd`, `Rs1`, `Rs2`, and `Rs3` hold register numbers. Each opcode determines whether
+an operand names an integer or floating register; fields irrelevant to that
+opcode are ignored. `riscv.Standard(word)` and `riscv.Compressed(halfword)` provide
+raw encodings for custom or intentionally illegal instructions.
 
-`Instruction::Standard(u32)` and `Instruction::Compressed(u16)` retain the raw
-instruction API for custom opcodes and deliberate illegal-instruction tests.
-`rvgen::generator::Instruction` remains available as a re-export.
-
-The low-level encoders retain their existing names, argument order, immediate
-masking, and assertions. They cover RV32/RV64 I, M, A, F, D, C, Zicsr, Zifencei,
-and privileged instructions. Their arguments are `i32`, except atomic ordering
-booleans, and their result is `u32`. Branch/jump offsets are bytes; LUI/AUIPC
-immediates are the upper 20-bit field. The operand-bearing API fixes LR's unused
-`rs2` field to zero.
-
-This refactor does not provide full ISA/XLEN validation or repair the existing
-compressed-helper bit-layout quirks. The new API checks that compressed results
-fit 16 bits and panics instead of silently truncating. Callers remain responsible
-for valid immediates, compressed register subsets, and enabled extensions.
-
-For an explicit instruction program, see [examples/encode.rs](examples/encode.rs):
+For a complete explicit workload:
 
 ```sh
-cargo run --example encode -- encoded.elf
-spike -m64 encoded.elf
+go run ./examples/encode # Writes encoded.elf.
 ```
 
-## Command-line configuration
+Pass an output filename directly, for example `go run ./examples/encode answer.elf`.
 
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `--config PATH` | none | Read top-level TOML defaults |
-| `--size N` | 256 | Total emitted workload instructions across all cores and blocks |
-| `--memsize N` | 4096 | Reserved parameter; currently unused |
-| `--num-cores N` | 1 | Core count; ELF output requires exactly one |
-| `--num-bbs N` | 12 | Basic blocks per core |
-| `--seed N` | 0 | Seed for reproducible choices and operands |
-| `--authorize-privileges VALUE` | true | Allow privileged generation, including the opt-in CSR class |
-| `--out PATH`, `-o PATH` | output.elf | ELF destination |
-| `--num-elfs N` | 1 | Generate N files in one process, with consecutive seeds |
-| `--out-dir PATH` | parent of --out | Output directory, created when supplied or in batch mode |
+Custom generation weights remain per generator:
 
-Core, block, and ELF counts must be positive; size may be zero. `size` counts
-emitted workload instructions, excluding runtime entry/exit code. It is divided
-across cores, then blocks, with remainders assigned to earlier cores/blocks.
-`CoreGeneratorParams::num_insts` is the total per core;
-`BasicBlockGeneratorParams::num_insts` is the budget for one block. For example,
-`size = 21`, two cores, and three blocks gives block budgets `[4, 4, 3]` and
-`[4, 3, 3]`. Empty blocks are allowed when there are fewer instructions than blocks.
-
-An action sequence consumes its full instruction count and never crosses a block
-boundary. Choices too large for the remaining budget are excluded and another
-choice is sampled. If no enabled choice can fill the budget, generation returns
-an error instead of truncating a sequence or exceeding the requested size. A
-zero-output choice can run once between instruction emissions; a policy consisting
-only of zero-output actions errors for a nonempty budget instead of looping.
-
-Only `1`, `true`, and `yes` (case insensitive) enable a boolean option. Repeating
-`generate()` with the same parameters and seed reproduces choices, operands, and
-bytes; `Cargo.lock` pins the RNG dependencies. Signed seeds retain the existing
-absolute-value convention. The previous scaffold's selection stream changes
-because generating operands now consumes randomness as well.
-
-`--config` accepts the keys in [examples/config.toml](examples/config.toml), including
-`num_elfs`. Explicit CLI values take precedence. Unknown keys and incorrect TOML
-value types are errors. Paths are relative to the working directory.
-Historical weight tables and Chipyard settings are archived in
-[docs/legacy](docs/legacy/README.md); the Rust CLI does not load them.
-
-```sh
-cargo run --release --locked -- --config examples/config.toml -o configured.elf
-cargo run --release --locked -- --num-elfs 1000 --out-dir generated -o case.elf
+```go
+g.ChoiceWeights = []rvgen.ChoiceWeight{
+    {Choice: rvgen.InstructionChoice(riscv.ClassAlu), Weight: 1},
+    {Choice: rvgen.ActionChoice(rvgen.RegFsm), Weight: 0.1},
+}
 ```
 
-This creates `case_000000.elf` through `case_000999.elf`. With one ELF the original
-filename is retained. Existing destination files are overwritten. Each command
-prints generation/write time and ELF/s; parsing and startup are outside that
-timer. This measures workload generation and ELF writing throughput.
+## Behavior
 
-The library's `GeneratorParams` also exposes `is_64bit` and `start_addr` for ELF32
-and custom entry addresses. `ElfBuilder` accepts explicit section addresses,
-bytes, flags, and alignment. Callers must choose addresses consistent with the
-entry point and load-segment alignment. Section names must be unique ASCII names
-without NULs; alignment must be zero, one, or a power of two.
+The port includes all 196 instruction encoders, ISA classes, architectural
+constants, CSR identifiers, and static RVWMO dependency metadata. Compressed
+instructions are available for explicit construction. Encoding retains the
+Rust helpers' argument order, masking, assertions, and compressed-layout quirks;
+compressed encodings exceeding 16 bits panic instead of truncating.
 
-The assembly template is embedded and works from any working directory. Its
-external `workload` and `__stack_top` references must be supplied when linking
-assembly; ELF generation uses the separate built-in runtime.
+The generator preserves weighted choices, operand generation, whole action
+sequences, exact core/block budgets, selection records, and regeneration from
+current parameters. Failed generation retains the previous workload. Unsupported
+platform-dependent actions return errors when enabled. Memory accesses and
+indirect jumps do not have a platform memory map and can trap, as in Rust.
+
+ELF32/ELF64 output includes the entry runtime, trap handler, aligned HTIF mailboxes,
+and symbols. Success writes 1 to `tohost`; traps write 3. The assembly template is
+embedded in the binary. The in-memory ELF writer rejects images larger than 1 GiB
+before allocating storage, including excessive alignment gaps.
+
+The existing CLI flags, defaults, TOML keys, override precedence, numbered batch
+filenames, seed-range checks, and throughput reporting are supported. `CLI` is a
+single shared struct for flags and TOML; `config` itself is CLI-only. Unknown TOML
+keys and incorrect types are rejected. Paths are relative to the current working
+directory. Count flags accept nonnegative decimal integers, and the seed is a
+signed decimal integer. The Go standard flag parser also accepts single-dash
+long options, and its help/error wording differs from Clap.
+
+**Seed compatibility:** Go uses its standard `math/rand` generator. Repeating a
+seed reproduces Go's workloads, including the existing absolute-value convention
+for signed seeds. The same seed does **not** produce Rust's ChaCha-based workload.
+Explicit instruction encodings and the built-in runtime match Rust byte for byte.
+
+## Performance
+
+In a local Linux x86-64 comparison, this Go implementation produced about 1.7×
+as many 256-instruction ELFs per second and 2.8× as many 4,096-instruction ELFs
+as the Rust release build. See [BENCHMARKS.md](BENCHMARKS.md) for the measurements,
+commands, and limits of the comparison.
+
+## Files
+
+| File | Purpose |
+| --- | --- |
+| `cli.go`, `cmd/rvgen/` | Shared CLI/TOML settings, batch loop, and executable |
+| `params.go`, `policy.go`, `generator.go` | One parameter set, choices, generation, and plain workload data |
+| `riscv/instruction.go`, `riscv/table.go` | Editable instructions and opcode table |
+| `riscv/rv*.go`, `riscv/z*.go` | Low-level bit encoders |
+| `riscv/registers.go`, `riscv/rvwmo.go` | Architectural and dependency metadata |
+| `elf.go`, `runtime.go` | Executable layout and bare-metal runtime |
+| `examples/` | Config and explicit instruction example |
 
 ## Validation
 
 ```sh
-cargo test --locked
-cargo fmt --check
-cargo clippy --locked --all-targets -- -D warnings
+go test ./...
+go vet ./...
+go test -race ./...
+go test -run '^$' -bench . -benchmem
 ```
 
-Tests check instruction encodings against independent reference words verified
-with GNU RISC-V tools, operand mutation, atomic ordering, mixed-width emission,
-ELF parsing, generator behavior, and CLI integration. Python parity tests and
-frozen Python snapshots have been removed. Neither Python nor GNU tools are test
-dependencies. Runtime tests also execute RV32/RV64 success and trap cases in
-Spike when it is installed; set `SPIKE` to override its executable path.
+Tests include 1,568 encoding fixtures covering every opcode, independent reference
+words previously verified with GNU RISC-V tools, and byte-for-byte Rust ELF
+runtime fixtures for RV32 and RV64. Go's `debug/elf` independently checks headers,
+sections, segments, and symbols. Generator and executable tests check budgets,
+seed reproducibility, class restrictions, errors, and config/batch behavior.
 
-Ported RISC-V source retains its original copyright notices. See [LICENSE](LICENSE)
-for GPL-3.0-only terms.
+When `spike` is installed (or `SPIKE` names its executable), tests also execute
+RV32/RV64 empty, long, compressed, illegal, and generated workloads. This test is
+explicitly skipped otherwise. Fixture tests need no Rust installation; fixture
+provenance is documented beside the data.
+
+Original RISC-V source copyright notices are retained. Licensed GPL-3.0-only;
+see [LICENSE](LICENSE).

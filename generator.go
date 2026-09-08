@@ -113,7 +113,6 @@ func createCores(p GeneratorParams) []Core {
 }
 
 // Generate replaces the entire workload only after successful generation.
-// The Go RNG is reproducible, but its stream differs from Rust's ChaCha RNG.
 func (g *Generator) Generate() error {
 	if err := g.Params.Validate(); err != nil {
 		return err
