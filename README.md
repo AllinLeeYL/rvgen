@@ -1,5 +1,10 @@
 # rvgen
 
+A standalone Go rewrite is available in [go/](go/README.md), with the library,
+CLI, instruction encoders, ELF runtime, and its own tests and build instructions.
+See the [Go design](go/DESIGN.md) for its simplified generation and output flow,
+and the [debug commands](go/README.md#debug) for Go and RISC-V debugging.
+
 A self-contained Rust package with a library and an `rvgen` executable. Building
 and running it requires neither Python nor a RISC-V toolchain.
 

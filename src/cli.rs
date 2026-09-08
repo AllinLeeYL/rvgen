@@ -7,11 +7,14 @@ use serde::Deserialize;
 
 use crate::{GeneratorParams, Result};
 
-#[derive(Debug, Parser)]
+/// Settings parsed from CLI arguments or a TOML configuration file.
+#[derive(Debug, Default, Parser, Deserialize)]
 #[command(version, about = "RISC-V instruction generator")]
+#[serde(deny_unknown_fields)]
 pub struct Cli {
     /// Read defaults from a TOML file.
     #[arg(long)]
+    #[serde(skip)]
     pub config: Option<PathBuf>,
     /// Total workload instructions, shared across all cores and basic blocks.
     #[arg(long)]
@@ -50,20 +53,6 @@ pub fn parse_bool(value: &str) -> std::result::Result<bool, String> {
     ))
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Config {
-    pub size: Option<usize>,
-    pub memsize: Option<usize>,
-    pub num_cores: Option<usize>,
-    pub num_bbs: Option<usize>,
-    pub seed: Option<i64>,
-    pub authorize_privileges: Option<bool>,
-    pub out: Option<PathBuf>,
-    pub num_elfs: Option<usize>,
-    pub out_dir: Option<PathBuf>,
-}
-
 #[derive(Debug)]
 pub struct Options {
     pub params: GeneratorParams,
@@ -74,6 +63,7 @@ pub struct Options {
 
 impl Cli {
     pub fn resolve(self) -> Result<Options> {
+        // Read the config file if specified, otherwise use defaults.
         let config = match &self.config {
             Some(path) => {
                 let source = std::fs::read_to_string(path)
@@ -81,12 +71,13 @@ impl Cli {
                 toml::from_str(&source)
                     .map_err(|error| format!("invalid config {}: {error}", path.display()))?
             }
-            None => Config::default(),
+            None => Self::default(),
         };
+        // Merge CLI arguments with config file values, validating the result.
         self.with_config(config)
     }
 
-    pub fn with_config(self, config: Config) -> Result<Options> {
+    pub fn with_config(self, config: Self) -> Result<Options> {
         let defaults = GeneratorParams::default();
         let params = GeneratorParams {
             size: self.size.or(config.size).unwrap_or(defaults.size),
@@ -119,7 +110,7 @@ impl Cli {
                 .or(config.out)
                 .unwrap_or_else(|| "output.elf".into()),
             num_elfs,
-            out_dir: self.out_dir.or(config.out_dir),
+            out_dir: self.out_dir.or(config.out_dir).or_else(|| Some("elfs".into())),
         })
     }
 }

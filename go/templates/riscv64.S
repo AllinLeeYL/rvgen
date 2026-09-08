@@ -1,0 +1,109 @@
+
+
+#ifdef TEXT_LEN
+  .set         LEN, TEXT_LEN
+#else
+  .set         LEN, 0x10
+#endif
+
+
+.section     .data
+  .globl       trap_mcause
+  .globl       trap_mepc
+  .globl       trap_mtval
+  .align       4
+
+trap_mcause:
+  .dword       0
+trap_mepc:
+  .dword       0
+trap_mtval:
+  .dword       0
+
+
+.section .text
+    .globl       _start
+    .align       4
+
+    .option      push # save current assembler options
+    .option      norvc # disable compressed instruction generation
+
+_start:
+    la           sp, __stack_top
+
+    # Install the machine-mode trap handler
+    la           t0, trap_handler
+    csrw         mtvec, t0
+
+    # mstatus.FS = Dirty, bits [14:13] = 11.
+    li      t0, 0x6000
+    csrs    mstatus, t0
+
+{{ basic_blocks }}
+
+    # call workload
+    call workload
+
+_exit:
+    .option      pop
+    /*
+      a0 = exit code from test_main()
+
+      HTIF convention:
+        pass: write 1 to tohost
+        fail: write (code << 1) | 1 to tohost
+    */
+
+    beqz a0, 1f
+
+    slli a0, a0, 1
+    ori  a0, a0, 1
+    j    2f
+
+1:
+    li   a0, 1
+
+2:
+    la   t0, tohost
+    sd   a0, 0(t0)
+
+3:
+    j       3b
+
+
+.pushsection .trap_handler, "ax", @progbits
+  .align       4
+  .global      trap_handler
+
+trap_handler:
+  csrr         t0, mcause
+  la           t1, trap_mcause
+  sd           t0, 0(t1)
+
+  csrr         t0, mepc
+  la           t1, trap_mepc
+  sd           t0, 0(t1)
+
+  csrr         t0, mtval
+  la           t1, trap_mtval
+  sd           t0, 0(t1)
+
+  /*
+    Exit with failure code 3.
+    Then park forever.
+  */
+  la           t0, tohost
+  li           t1, 3
+  sd           t1, 0(t0)
+
+1:
+  j            1b
+.popsection
+
+
+.pushsection .tohost,"aw",@progbits
+.align 6; .global tohost; tohost:
+  .dword       0; .size tohost, 8;
+.align 6; .global fromhost; fromhost:
+  .dword       0; .size fromhost, 8
+.popsection

@@ -1,0 +1,10 @@
+# Explicit command-line flags override these defaults.
+size = 256
+memsize = 4096
+num_cores = 1
+num_bbs = 12
+seed = 42
+authorize_privileges = true
+out = "output.elf"
+num_elfs = 1
+out_dir = "elfs"

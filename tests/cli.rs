@@ -6,10 +6,7 @@ use std::{
 
 use clap::Parser;
 use object::{Object, ObjectSection, ObjectSymbol};
-use rvgen::{
-    cli::{Cli, Config},
-    GeneratorParams,
-};
+use rvgen::{cli::Cli, GeneratorParams};
 
 static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
 
@@ -56,7 +53,7 @@ fn defaults_and_cli_overrides() {
     let options = Cli::try_parse_from(["rvgen"]).unwrap().resolve().unwrap();
     assert_eq!(options.params, GeneratorParams::default());
     assert_eq!(options.out, PathBuf::from("output.elf"));
-    let config: Config = toml::from_str("size = 10\nmemsize = 8192\nnum_cores = 2\nnum_bbs = 3\nseed = 7\nauthorize_privileges = true\nout = 'configured.elf'").unwrap();
+    let config: Cli = toml::from_str("size = 10\nmemsize = 8192\nnum_cores = 2\nnum_bbs = 3\nseed = 7\nauthorize_privileges = true\nout = 'configured.elf'").unwrap();
     let options = Cli::try_parse_from([
         "rvgen",
         "--size",
@@ -85,12 +82,13 @@ fn defaults_and_cli_overrides() {
 fn invalid_config_and_numeric_inputs_are_rejected() {
     for source in [
         "unknown = 1",
+        "config = 'nested.toml'",
         "size = '12'",
         "num_cores = -1",
         "[instruction_weights]\nALU = 0.1",
         "seed = true",
     ] {
-        assert!(toml::from_str::<Config>(source).is_err(), "{source}");
+        assert!(toml::from_str::<Cli>(source).is_err(), "{source}");
     }
     for args in [
         ["rvgen", "--size", "-1"],

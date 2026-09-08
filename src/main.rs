@@ -1,15 +1,15 @@
 use clap::Parser;
-use rvgen::{cli::Cli, Generator};
+use rvgen::{cli::Cli, Generator, GeneratorParams};
 use std::time::Instant;
 
 fn main() {
-    let cli = Cli::parse();
+    let cli: Cli = Cli::parse();
     let result = (|| -> rvgen::Result<()> {
         let options = cli.resolve()?;
         if options.params.num_cores != 1 {
             return Err("only one core is supported for ELF output".into());
         }
-        let started = Instant::now();
+        let started: Instant = Instant::now();
 
         if options.out_dir.is_some() || options.num_elfs > 1 {
             let first = options.output_path(0);
@@ -20,9 +20,9 @@ fn main() {
 
         /* Begin of Core Logic */
         for index in 0..options.num_elfs {
-            let mut params = options.params.clone();
+            let mut params: GeneratorParams = options.params.clone();
             params.seed += index as i64; // range validated before any files are written
-            let mut generator = Generator::new(params)?;
+            let mut generator: Generator = Generator::new(params)?;
             generator.generate()?;
             generator.gen_elf(options.output_path(index))?;
         }

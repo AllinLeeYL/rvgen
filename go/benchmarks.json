@@ -1,0 +1,141 @@
+{
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "go": "go1.27.1",
+    "rust": "rustc 1.96.0",
+    "builds": "go build; cargo build --release --locked",
+    "samples": 5,
+    "seed": 42
+  },
+  "results": [
+    {
+      "size": 256,
+      "count": 2000,
+      "runs": {
+        "Rust": [
+          {
+            "wall_seconds": 0.2077130159996159,
+            "generation_seconds": 0.206476,
+            "elfs_per_second": 9686.355799221217
+          },
+          {
+            "wall_seconds": 0.21494014899872127,
+            "generation_seconds": 0.213739,
+            "elfs_per_second": 9357.206686659898
+          },
+          {
+            "wall_seconds": 0.2111567219999415,
+            "generation_seconds": 0.209809,
+            "elfs_per_second": 9532.479540915785
+          },
+          {
+            "wall_seconds": 0.2138006580007641,
+            "generation_seconds": 0.211992,
+            "elfs_per_second": 9434.318276161364
+          },
+          {
+            "wall_seconds": 0.21178787000098964,
+            "generation_seconds": 0.210464,
+            "elfs_per_second": 9502.812832598449
+          }
+        ],
+        "Go": [
+          {
+            "wall_seconds": 0.13129895000020042,
+            "generation_seconds": 0.128894,
+            "elfs_per_second": 15516.626064828462
+          },
+          {
+            "wall_seconds": 0.12837478800065583,
+            "generation_seconds": 0.126118,
+            "elfs_per_second": 15858.16457603197
+          },
+          {
+            "wall_seconds": 0.1288728009985789,
+            "generation_seconds": 0.125808,
+            "elfs_per_second": 15897.240239094494
+          },
+          {
+            "wall_seconds": 0.13252718400144659,
+            "generation_seconds": 0.129031,
+            "elfs_per_second": 15500.151126473482
+          },
+          {
+            "wall_seconds": 0.12941711700113956,
+            "generation_seconds": 0.12616,
+            "elfs_per_second": 15852.885225110971
+          }
+        ]
+      },
+      "median_elfs_per_second": {
+        "Rust": 9502.812832598449,
+        "Go": 15852.885225110971
+      }
+    },
+    {
+      "size": 4096,
+      "count": 300,
+      "runs": {
+        "Rust": [
+          {
+            "wall_seconds": 0.38971406900054717,
+            "generation_seconds": 0.388641,
+            "elfs_per_second": 771.920615683883
+          },
+          {
+            "wall_seconds": 0.3880214840010012,
+            "generation_seconds": 0.386819,
+            "elfs_per_second": 775.5565264374294
+          },
+          {
+            "wall_seconds": 0.38666025800011994,
+            "generation_seconds": 0.385229,
+            "elfs_per_second": 778.7575701725467
+          },
+          {
+            "wall_seconds": 0.3909160980001616,
+            "generation_seconds": 0.389413,
+            "elfs_per_second": 770.3903054083967
+          },
+          {
+            "wall_seconds": 0.38572452100015653,
+            "generation_seconds": 0.384288,
+            "elfs_per_second": 780.6645016237821
+          }
+        ],
+        "Go": [
+          {
+            "wall_seconds": 0.14291015299932042,
+            "generation_seconds": 0.139243,
+            "elfs_per_second": 2154.506869286068
+          },
+          {
+            "wall_seconds": 0.14390248100062308,
+            "generation_seconds": 0.14134,
+            "elfs_per_second": 2122.5413895570964
+          },
+          {
+            "wall_seconds": 0.1455547599998681,
+            "generation_seconds": 0.143181,
+            "elfs_per_second": 2095.2500680956273
+          },
+          {
+            "wall_seconds": 0.13940375899983337,
+            "generation_seconds": 0.136592,
+            "elfs_per_second": 2196.321892936629
+          },
+          {
+            "wall_seconds": 0.14065999100057525,
+            "generation_seconds": 0.138275,
+            "elfs_per_second": 2169.589585969987
+          }
+        ]
+      },
+      "median_elfs_per_second": {
+        "Rust": 775.5565264374294,
+        "Go": 2154.506869286068
+      }
+    }
+  ]
+}
