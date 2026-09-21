@@ -1,0 +1,1570 @@
+# GNU Binutils 2.46; RV32/RV64 IMAFDC + Zicsr + Zifencei + Svinval; relaxation disabled.
+# mnemonic	XLEN	word(hex)	operands in catalog order	assembly
+c.jal	32	3001	-2048	c.jal .-2048
+c.jal	32	3ffd	-2	c.jal .-2
+c.jal	32	2001	0	c.jal .+0
+c.jal	32	2009	2	c.jal .+2
+c.jal	32	2011	4	c.jal .+4
+c.jal	32	2101	1024	c.jal .+1024
+c.jal	32	2ffd	2046	c.jal .+2046
+c.jal	32	3101	-1024	c.jal .-1024
+lui	64	80000037	0,-524288	lui x0, 524288
+lui	64	ffffffb7	31,-1	lui x31, 1048575
+lui	64	000000b7	1,0	lui x1, 0
+lui	64	00001437	8,1	lui x8, 1
+lui	64	7ffff7b7	15,524287	lui x15, 524287
+lui	64	fffff837	16,1048575	lui x16, 1048575
+lui	64	12345bb7	23,74565	lui x23, 74565
+lui	64	008003b7	7,2048	lui x7, 2048
+auipc	64	80000017	0,-524288	auipc x0, 524288
+auipc	64	ffffff97	31,-1	auipc x31, 1048575
+auipc	64	00000097	1,0	auipc x1, 0
+auipc	64	00001417	8,1	auipc x8, 1
+auipc	64	7ffff797	15,524287	auipc x15, 524287
+auipc	64	fffff817	16,1048575	auipc x16, 1048575
+auipc	64	12345b97	23,74565	auipc x23, 74565
+auipc	64	00800397	7,2048	auipc x7, 2048
+jal	64	8000006f	0,-1048576	jal x0, .-1048576
+jal	64	ffffffef	31,-2	jal x31, .-2
+jal	64	000000ef	1,0	jal x1, .+0
+jal	64	0020046f	8,2	jal x8, .+2
+jal	64	004007ef	15,4	jal x15, .+4
+jal	64	0010086f	16,2048	jal x16, .+2048
+jal	64	7ffffbef	23,1048574	jal x23, .+1048574
+jal	64	000013ef	7,4096	jal x7, .+4096
+jalr	64	800f8067	0,31,-2048	jalr x0, x31, -2048
+jalr	64	fff08fe7	31,1,-1	jalr x31, x1, -1
+jalr	64	000400e7	1,8,0	jalr x1, x8, 0
+jalr	64	00178467	8,15,1	jalr x8, x15, 1
+jalr	64	01f807e7	15,16,31	jalr x15, x16, 31
+jalr	64	7ffb8867	16,23,2047	jalr x16, x23, 2047
+jalr	64	ff038be7	23,7,-16	jalr x23, x7, -16
+jalr	64	400003e7	7,0,1024	jalr x7, x0, 1024
+beq	64	801f8063	31,1,-4096	beq x31, x1, .-4096
+beq	64	fe808fe3	1,8,-2	beq x1, x8, .-2
+beq	64	00f40063	8,15,0	beq x8, x15, .+0
+beq	64	01078163	15,16,2	beq x15, x16, .+2
+beq	64	01780263	16,23,4	beq x16, x23, .+4
+beq	64	007b80e3	23,7,2048	beq x23, x7, .+2048
+beq	64	7e038fe3	7,0,4094	beq x7, x0, .+4094
+beq	64	81f000e3	0,31,-2048	beq x0, x31, .-2048
+bne	64	801f9063	31,1,-4096	bne x31, x1, .-4096
+bne	64	fe809fe3	1,8,-2	bne x1, x8, .-2
+bne	64	00f41063	8,15,0	bne x8, x15, .+0
+bne	64	01079163	15,16,2	bne x15, x16, .+2
+bne	64	01781263	16,23,4	bne x16, x23, .+4
+bne	64	007b90e3	23,7,2048	bne x23, x7, .+2048
+bne	64	7e039fe3	7,0,4094	bne x7, x0, .+4094
+bne	64	81f010e3	0,31,-2048	bne x0, x31, .-2048
+blt	64	801fc063	31,1,-4096	blt x31, x1, .-4096
+blt	64	fe80cfe3	1,8,-2	blt x1, x8, .-2
+blt	64	00f44063	8,15,0	blt x8, x15, .+0
+blt	64	0107c163	15,16,2	blt x15, x16, .+2
+blt	64	01784263	16,23,4	blt x16, x23, .+4
+blt	64	007bc0e3	23,7,2048	blt x23, x7, .+2048
+blt	64	7e03cfe3	7,0,4094	blt x7, x0, .+4094
+blt	64	81f040e3	0,31,-2048	blt x0, x31, .-2048
+bge	64	801fd063	31,1,-4096	bge x31, x1, .-4096
+bge	64	fe80dfe3	1,8,-2	bge x1, x8, .-2
+bge	64	00f45063	8,15,0	bge x8, x15, .+0
+bge	64	0107d163	15,16,2	bge x15, x16, .+2
+bge	64	01785263	16,23,4	bge x16, x23, .+4
+bge	64	007bd0e3	23,7,2048	bge x23, x7, .+2048
+bge	64	7e03dfe3	7,0,4094	bge x7, x0, .+4094
+bge	64	81f050e3	0,31,-2048	bge x0, x31, .-2048
+bltu	64	801fe063	31,1,-4096	bltu x31, x1, .-4096
+bltu	64	fe80efe3	1,8,-2	bltu x1, x8, .-2
+bltu	64	00f46063	8,15,0	bltu x8, x15, .+0
+bltu	64	0107e163	15,16,2	bltu x15, x16, .+2
+bltu	64	01786263	16,23,4	bltu x16, x23, .+4
+bltu	64	007be0e3	23,7,2048	bltu x23, x7, .+2048
+bltu	64	7e03efe3	7,0,4094	bltu x7, x0, .+4094
+bltu	64	81f060e3	0,31,-2048	bltu x0, x31, .-2048
+bgeu	64	801ff063	31,1,-4096	bgeu x31, x1, .-4096
+bgeu	64	fe80ffe3	1,8,-2	bgeu x1, x8, .-2
+bgeu	64	00f47063	8,15,0	bgeu x8, x15, .+0
+bgeu	64	0107f163	15,16,2	bgeu x15, x16, .+2
+bgeu	64	01787263	16,23,4	bgeu x16, x23, .+4
+bgeu	64	007bf0e3	23,7,2048	bgeu x23, x7, .+2048
+bgeu	64	7e03ffe3	7,0,4094	bgeu x7, x0, .+4094
+bgeu	64	81f070e3	0,31,-2048	bgeu x0, x31, .-2048
+lb	64	800f8003	0,31,-2048	lb x0, -2048(x31)
+lb	64	fff08f83	31,1,-1	lb x31, -1(x1)
+lb	64	00040083	1,8,0	lb x1, 0(x8)
+lb	64	00178403	8,15,1	lb x8, 1(x15)
+lb	64	01f80783	15,16,31	lb x15, 31(x16)
+lb	64	7ffb8803	16,23,2047	lb x16, 2047(x23)
+lb	64	ff038b83	23,7,-16	lb x23, -16(x7)
+lb	64	40000383	7,0,1024	lb x7, 1024(x0)
+lh	64	800f9003	0,31,-2048	lh x0, -2048(x31)
+lh	64	fff09f83	31,1,-1	lh x31, -1(x1)
+lh	64	00041083	1,8,0	lh x1, 0(x8)
+lh	64	00179403	8,15,1	lh x8, 1(x15)
+lh	64	01f81783	15,16,31	lh x15, 31(x16)
+lh	64	7ffb9803	16,23,2047	lh x16, 2047(x23)
+lh	64	ff039b83	23,7,-16	lh x23, -16(x7)
+lh	64	40001383	7,0,1024	lh x7, 1024(x0)
+lw	64	800fa003	0,31,-2048	lw x0, -2048(x31)
+lw	64	fff0af83	31,1,-1	lw x31, -1(x1)
+lw	64	00042083	1,8,0	lw x1, 0(x8)
+lw	64	0017a403	8,15,1	lw x8, 1(x15)
+lw	64	01f82783	15,16,31	lw x15, 31(x16)
+lw	64	7ffba803	16,23,2047	lw x16, 2047(x23)
+lw	64	ff03ab83	23,7,-16	lw x23, -16(x7)
+lw	64	40002383	7,0,1024	lw x7, 1024(x0)
+lbu	64	800fc003	0,31,-2048	lbu x0, -2048(x31)
+lbu	64	fff0cf83	31,1,-1	lbu x31, -1(x1)
+lbu	64	00044083	1,8,0	lbu x1, 0(x8)
+lbu	64	0017c403	8,15,1	lbu x8, 1(x15)
+lbu	64	01f84783	15,16,31	lbu x15, 31(x16)
+lbu	64	7ffbc803	16,23,2047	lbu x16, 2047(x23)
+lbu	64	ff03cb83	23,7,-16	lbu x23, -16(x7)
+lbu	64	40004383	7,0,1024	lbu x7, 1024(x0)
+lhu	64	800fd003	0,31,-2048	lhu x0, -2048(x31)
+lhu	64	fff0df83	31,1,-1	lhu x31, -1(x1)
+lhu	64	00045083	1,8,0	lhu x1, 0(x8)
+lhu	64	0017d403	8,15,1	lhu x8, 1(x15)
+lhu	64	01f85783	15,16,31	lhu x15, 31(x16)
+lhu	64	7ffbd803	16,23,2047	lhu x16, 2047(x23)
+lhu	64	ff03db83	23,7,-16	lhu x23, -16(x7)
+lhu	64	40005383	7,0,1024	lhu x7, 1024(x0)
+sb	64	801f8023	31,1,-2048	sb x1, -2048(x31)
+sb	64	fe808fa3	1,8,-1	sb x8, -1(x1)
+sb	64	00f40023	8,15,0	sb x15, 0(x8)
+sb	64	010780a3	15,16,1	sb x16, 1(x15)
+sb	64	01780fa3	16,23,31	sb x23, 31(x16)
+sb	64	7e7b8fa3	23,7,2047	sb x7, 2047(x23)
+sb	64	fe038823	7,0,-16	sb x0, -16(x7)
+sb	64	41f00023	0,31,1024	sb x31, 1024(x0)
+sh	64	801f9023	31,1,-2048	sh x1, -2048(x31)
+sh	64	fe809fa3	1,8,-1	sh x8, -1(x1)
+sh	64	00f41023	8,15,0	sh x15, 0(x8)
+sh	64	010790a3	15,16,1	sh x16, 1(x15)
+sh	64	01781fa3	16,23,31	sh x23, 31(x16)
+sh	64	7e7b9fa3	23,7,2047	sh x7, 2047(x23)
+sh	64	fe039823	7,0,-16	sh x0, -16(x7)
+sh	64	41f01023	0,31,1024	sh x31, 1024(x0)
+sw	64	801fa023	31,1,-2048	sw x1, -2048(x31)
+sw	64	fe80afa3	1,8,-1	sw x8, -1(x1)
+sw	64	00f42023	8,15,0	sw x15, 0(x8)
+sw	64	0107a0a3	15,16,1	sw x16, 1(x15)
+sw	64	01782fa3	16,23,31	sw x23, 31(x16)
+sw	64	7e7bafa3	23,7,2047	sw x7, 2047(x23)
+sw	64	fe03a823	7,0,-16	sw x0, -16(x7)
+sw	64	41f02023	0,31,1024	sw x31, 1024(x0)
+addi	64	800f8013	0,31,-2048	addi x0, x31, -2048
+addi	64	fff08f93	31,1,-1	addi x31, x1, -1
+addi	64	00040093	1,8,0	addi x1, x8, 0
+addi	64	00178413	8,15,1	addi x8, x15, 1
+addi	64	01f80793	15,16,31	addi x15, x16, 31
+addi	64	7ffb8813	16,23,2047	addi x16, x23, 2047
+addi	64	ff038b93	23,7,-16	addi x23, x7, -16
+addi	64	40000393	7,0,1024	addi x7, x0, 1024
+slti	64	800fa013	0,31,-2048	slti x0, x31, -2048
+slti	64	fff0af93	31,1,-1	slti x31, x1, -1
+slti	64	00042093	1,8,0	slti x1, x8, 0
+slti	64	0017a413	8,15,1	slti x8, x15, 1
+slti	64	01f82793	15,16,31	slti x15, x16, 31
+slti	64	7ffba813	16,23,2047	slti x16, x23, 2047
+slti	64	ff03ab93	23,7,-16	slti x23, x7, -16
+slti	64	40002393	7,0,1024	slti x7, x0, 1024
+sltiu	64	800fb013	0,31,-2048	sltiu x0, x31, -2048
+sltiu	64	fff0bf93	31,1,-1	sltiu x31, x1, -1
+sltiu	64	00043093	1,8,0	sltiu x1, x8, 0
+sltiu	64	0017b413	8,15,1	sltiu x8, x15, 1
+sltiu	64	01f83793	15,16,31	sltiu x15, x16, 31
+sltiu	64	7ffbb813	16,23,2047	sltiu x16, x23, 2047
+sltiu	64	ff03bb93	23,7,-16	sltiu x23, x7, -16
+sltiu	64	40003393	7,0,1024	sltiu x7, x0, 1024
+xori	64	800fc013	0,31,-2048	xori x0, x31, -2048
+xori	64	fff0cf93	31,1,-1	xori x31, x1, -1
+xori	64	00044093	1,8,0	xori x1, x8, 0
+xori	64	0017c413	8,15,1	xori x8, x15, 1
+xori	64	01f84793	15,16,31	xori x15, x16, 31
+xori	64	7ffbc813	16,23,2047	xori x16, x23, 2047
+xori	64	ff03cb93	23,7,-16	xori x23, x7, -16
+xori	64	40004393	7,0,1024	xori x7, x0, 1024
+ori	64	800fe013	0,31,-2048	ori x0, x31, -2048
+ori	64	fff0ef93	31,1,-1	ori x31, x1, -1
+ori	64	00046093	1,8,0	ori x1, x8, 0
+ori	64	0017e413	8,15,1	ori x8, x15, 1
+ori	64	01f86793	15,16,31	ori x15, x16, 31
+ori	64	7ffbe813	16,23,2047	ori x16, x23, 2047
+ori	64	ff03eb93	23,7,-16	ori x23, x7, -16
+ori	64	40006393	7,0,1024	ori x7, x0, 1024
+andi	64	800ff013	0,31,-2048	andi x0, x31, -2048
+andi	64	fff0ff93	31,1,-1	andi x31, x1, -1
+andi	64	00047093	1,8,0	andi x1, x8, 0
+andi	64	0017f413	8,15,1	andi x8, x15, 1
+andi	64	01f87793	15,16,31	andi x15, x16, 31
+andi	64	7ffbf813	16,23,2047	andi x16, x23, 2047
+andi	64	ff03fb93	23,7,-16	andi x23, x7, -16
+andi	64	40007393	7,0,1024	andi x7, x0, 1024
+slli	64	000f9013	0,31,0	slli x0, x31, 0
+slli	64	00109f93	31,1,1	slli x31, x1, 1
+slli	64	00241093	1,8,2	slli x1, x8, 2
+slli	64	01f79413	8,15,31	slli x8, x15, 31
+slli	64	02081793	15,16,32	slli x15, x16, 32
+slli	64	03eb9813	16,23,62	slli x16, x23, 62
+slli	64	03f39b93	23,7,63	slli x23, x7, 63
+slli	64	01001393	7,0,16	slli x7, x0, 16
+srli	64	000fd013	0,31,0	srli x0, x31, 0
+srli	64	0010df93	31,1,1	srli x31, x1, 1
+srli	64	00245093	1,8,2	srli x1, x8, 2
+srli	64	01f7d413	8,15,31	srli x8, x15, 31
+srli	64	02085793	15,16,32	srli x15, x16, 32
+srli	64	03ebd813	16,23,62	srli x16, x23, 62
+srli	64	03f3db93	23,7,63	srli x23, x7, 63
+srli	64	01005393	7,0,16	srli x7, x0, 16
+srai	64	400fd013	0,31,0	srai x0, x31, 0
+srai	64	4010df93	31,1,1	srai x31, x1, 1
+srai	64	40245093	1,8,2	srai x1, x8, 2
+srai	64	41f7d413	8,15,31	srai x8, x15, 31
+srai	64	42085793	15,16,32	srai x15, x16, 32
+srai	64	43ebd813	16,23,62	srai x16, x23, 62
+srai	64	43f3db93	23,7,63	srai x23, x7, 63
+srai	64	41005393	7,0,16	srai x7, x0, 16
+add	64	001f8033	0,31,1	add x0, x31, x1
+add	64	00808fb3	31,1,8	add x31, x1, x8
+add	64	00f400b3	1,8,15	add x1, x8, x15
+add	64	01078433	8,15,16	add x8, x15, x16
+add	64	017807b3	15,16,23	add x15, x16, x23
+add	64	007b8833	16,23,7	add x16, x23, x7
+add	64	00038bb3	23,7,0	add x23, x7, x0
+add	64	01f003b3	7,0,31	add x7, x0, x31
+sub	64	401f8033	0,31,1	sub x0, x31, x1
+sub	64	40808fb3	31,1,8	sub x31, x1, x8
+sub	64	40f400b3	1,8,15	sub x1, x8, x15
+sub	64	41078433	8,15,16	sub x8, x15, x16
+sub	64	417807b3	15,16,23	sub x15, x16, x23
+sub	64	407b8833	16,23,7	sub x16, x23, x7
+sub	64	40038bb3	23,7,0	sub x23, x7, x0
+sub	64	41f003b3	7,0,31	sub x7, x0, x31
+sll	64	001f9033	0,31,1	sll x0, x31, x1
+sll	64	00809fb3	31,1,8	sll x31, x1, x8
+sll	64	00f410b3	1,8,15	sll x1, x8, x15
+sll	64	01079433	8,15,16	sll x8, x15, x16
+sll	64	017817b3	15,16,23	sll x15, x16, x23
+sll	64	007b9833	16,23,7	sll x16, x23, x7
+sll	64	00039bb3	23,7,0	sll x23, x7, x0
+sll	64	01f013b3	7,0,31	sll x7, x0, x31
+slt	64	001fa033	0,31,1	slt x0, x31, x1
+slt	64	0080afb3	31,1,8	slt x31, x1, x8
+slt	64	00f420b3	1,8,15	slt x1, x8, x15
+slt	64	0107a433	8,15,16	slt x8, x15, x16
+slt	64	017827b3	15,16,23	slt x15, x16, x23
+slt	64	007ba833	16,23,7	slt x16, x23, x7
+slt	64	0003abb3	23,7,0	slt x23, x7, x0
+slt	64	01f023b3	7,0,31	slt x7, x0, x31
+sltu	64	001fb033	0,31,1	sltu x0, x31, x1
+sltu	64	0080bfb3	31,1,8	sltu x31, x1, x8
+sltu	64	00f430b3	1,8,15	sltu x1, x8, x15
+sltu	64	0107b433	8,15,16	sltu x8, x15, x16
+sltu	64	017837b3	15,16,23	sltu x15, x16, x23
+sltu	64	007bb833	16,23,7	sltu x16, x23, x7
+sltu	64	0003bbb3	23,7,0	sltu x23, x7, x0
+sltu	64	01f033b3	7,0,31	sltu x7, x0, x31
+xor	64	001fc033	0,31,1	xor x0, x31, x1
+xor	64	0080cfb3	31,1,8	xor x31, x1, x8
+xor	64	00f440b3	1,8,15	xor x1, x8, x15
+xor	64	0107c433	8,15,16	xor x8, x15, x16
+xor	64	017847b3	15,16,23	xor x15, x16, x23
+xor	64	007bc833	16,23,7	xor x16, x23, x7
+xor	64	0003cbb3	23,7,0	xor x23, x7, x0
+xor	64	01f043b3	7,0,31	xor x7, x0, x31
+srl	64	001fd033	0,31,1	srl x0, x31, x1
+srl	64	0080dfb3	31,1,8	srl x31, x1, x8
+srl	64	00f450b3	1,8,15	srl x1, x8, x15
+srl	64	0107d433	8,15,16	srl x8, x15, x16
+srl	64	017857b3	15,16,23	srl x15, x16, x23
+srl	64	007bd833	16,23,7	srl x16, x23, x7
+srl	64	0003dbb3	23,7,0	srl x23, x7, x0
+srl	64	01f053b3	7,0,31	srl x7, x0, x31
+sra	64	401fd033	0,31,1	sra x0, x31, x1
+sra	64	4080dfb3	31,1,8	sra x31, x1, x8
+sra	64	40f450b3	1,8,15	sra x1, x8, x15
+sra	64	4107d433	8,15,16	sra x8, x15, x16
+sra	64	417857b3	15,16,23	sra x15, x16, x23
+sra	64	407bd833	16,23,7	sra x16, x23, x7
+sra	64	4003dbb3	23,7,0	sra x23, x7, x0
+sra	64	41f053b3	7,0,31	sra x7, x0, x31
+or	64	001fe033	0,31,1	or x0, x31, x1
+or	64	0080efb3	31,1,8	or x31, x1, x8
+or	64	00f460b3	1,8,15	or x1, x8, x15
+or	64	0107e433	8,15,16	or x8, x15, x16
+or	64	017867b3	15,16,23	or x15, x16, x23
+or	64	007be833	16,23,7	or x16, x23, x7
+or	64	0003ebb3	23,7,0	or x23, x7, x0
+or	64	01f063b3	7,0,31	or x7, x0, x31
+and	64	001ff033	0,31,1	and x0, x31, x1
+and	64	0080ffb3	31,1,8	and x31, x1, x8
+and	64	00f470b3	1,8,15	and x1, x8, x15
+and	64	0107f433	8,15,16	and x8, x15, x16
+and	64	017877b3	15,16,23	and x15, x16, x23
+and	64	007bf833	16,23,7	and x16, x23, x7
+and	64	0003fbb3	23,7,0	and x23, x7, x0
+and	64	01f073b3	7,0,31	and x7, x0, x31
+fence	64	0330000f	51	fence rw, rw
+fence	64	0310000f	49	fence rw, w
+fence	64	0230000f	35	fence r, rw
+fence	64	0220000f	34	fence r, r
+fence	64	0110000f	17	fence w, w
+fence	64	0ff0000f	255	fence iorw, iorw
+fence	64	0880000f	136	fence i, i
+fence	64	8330000f	2099	fence.tso
+ecall	64	00000073		ecall
+ecall	64	00000073		ecall
+ecall	64	00000073		ecall
+ecall	64	00000073		ecall
+ecall	64	00000073		ecall
+ecall	64	00000073		ecall
+ecall	64	00000073		ecall
+ecall	64	00000073		ecall
+ebreak	64	00100073		ebreak
+ebreak	64	00100073		ebreak
+ebreak	64	00100073		ebreak
+ebreak	64	00100073		ebreak
+ebreak	64	00100073		ebreak
+ebreak	64	00100073		ebreak
+ebreak	64	00100073		ebreak
+ebreak	64	00100073		ebreak
+lwu	64	800fe003	0,31,-2048	lwu x0, -2048(x31)
+lwu	64	fff0ef83	31,1,-1	lwu x31, -1(x1)
+lwu	64	00046083	1,8,0	lwu x1, 0(x8)
+lwu	64	0017e403	8,15,1	lwu x8, 1(x15)
+lwu	64	01f86783	15,16,31	lwu x15, 31(x16)
+lwu	64	7ffbe803	16,23,2047	lwu x16, 2047(x23)
+lwu	64	ff03eb83	23,7,-16	lwu x23, -16(x7)
+lwu	64	40006383	7,0,1024	lwu x7, 1024(x0)
+ld	64	800fb003	0,31,-2048	ld x0, -2048(x31)
+ld	64	fff0bf83	31,1,-1	ld x31, -1(x1)
+ld	64	00043083	1,8,0	ld x1, 0(x8)
+ld	64	0017b403	8,15,1	ld x8, 1(x15)
+ld	64	01f83783	15,16,31	ld x15, 31(x16)
+ld	64	7ffbb803	16,23,2047	ld x16, 2047(x23)
+ld	64	ff03bb83	23,7,-16	ld x23, -16(x7)
+ld	64	40003383	7,0,1024	ld x7, 1024(x0)
+sd	64	801fb023	31,1,-2048	sd x1, -2048(x31)
+sd	64	fe80bfa3	1,8,-1	sd x8, -1(x1)
+sd	64	00f43023	8,15,0	sd x15, 0(x8)
+sd	64	0107b0a3	15,16,1	sd x16, 1(x15)
+sd	64	01783fa3	16,23,31	sd x23, 31(x16)
+sd	64	7e7bbfa3	23,7,2047	sd x7, 2047(x23)
+sd	64	fe03b823	7,0,-16	sd x0, -16(x7)
+sd	64	41f03023	0,31,1024	sd x31, 1024(x0)
+addiw	64	800f801b	0,31,-2048	addiw x0, x31, -2048
+addiw	64	fff08f9b	31,1,-1	addiw x31, x1, -1
+addiw	64	0004009b	1,8,0	addiw x1, x8, 0
+addiw	64	0017841b	8,15,1	addiw x8, x15, 1
+addiw	64	01f8079b	15,16,31	addiw x15, x16, 31
+addiw	64	7ffb881b	16,23,2047	addiw x16, x23, 2047
+addiw	64	ff038b9b	23,7,-16	addiw x23, x7, -16
+addiw	64	4000039b	7,0,1024	addiw x7, x0, 1024
+slliw	64	000f901b	0,31,0	slliw x0, x31, 0
+slliw	64	00109f9b	31,1,1	slliw x31, x1, 1
+slliw	64	0024109b	1,8,2	slliw x1, x8, 2
+slliw	64	00f7941b	8,15,15	slliw x8, x15, 15
+slliw	64	0108179b	15,16,16	slliw x15, x16, 16
+slliw	64	01eb981b	16,23,30	slliw x16, x23, 30
+slliw	64	01f39b9b	23,7,31	slliw x23, x7, 31
+slliw	64	0040139b	7,0,4	slliw x7, x0, 4
+srliw	64	000fd01b	0,31,0	srliw x0, x31, 0
+srliw	64	0010df9b	31,1,1	srliw x31, x1, 1
+srliw	64	0024509b	1,8,2	srliw x1, x8, 2
+srliw	64	00f7d41b	8,15,15	srliw x8, x15, 15
+srliw	64	0108579b	15,16,16	srliw x15, x16, 16
+srliw	64	01ebd81b	16,23,30	srliw x16, x23, 30
+srliw	64	01f3db9b	23,7,31	srliw x23, x7, 31
+srliw	64	0040539b	7,0,4	srliw x7, x0, 4
+sraiw	64	400fd01b	0,31,0	sraiw x0, x31, 0
+sraiw	64	4010df9b	31,1,1	sraiw x31, x1, 1
+sraiw	64	4024509b	1,8,2	sraiw x1, x8, 2
+sraiw	64	40f7d41b	8,15,15	sraiw x8, x15, 15
+sraiw	64	4108579b	15,16,16	sraiw x15, x16, 16
+sraiw	64	41ebd81b	16,23,30	sraiw x16, x23, 30
+sraiw	64	41f3db9b	23,7,31	sraiw x23, x7, 31
+sraiw	64	4040539b	7,0,4	sraiw x7, x0, 4
+addw	64	001f803b	0,31,1	addw x0, x31, x1
+addw	64	00808fbb	31,1,8	addw x31, x1, x8
+addw	64	00f400bb	1,8,15	addw x1, x8, x15
+addw	64	0107843b	8,15,16	addw x8, x15, x16
+addw	64	017807bb	15,16,23	addw x15, x16, x23
+addw	64	007b883b	16,23,7	addw x16, x23, x7
+addw	64	00038bbb	23,7,0	addw x23, x7, x0
+addw	64	01f003bb	7,0,31	addw x7, x0, x31
+subw	64	401f803b	0,31,1	subw x0, x31, x1
+subw	64	40808fbb	31,1,8	subw x31, x1, x8
+subw	64	40f400bb	1,8,15	subw x1, x8, x15
+subw	64	4107843b	8,15,16	subw x8, x15, x16
+subw	64	417807bb	15,16,23	subw x15, x16, x23
+subw	64	407b883b	16,23,7	subw x16, x23, x7
+subw	64	40038bbb	23,7,0	subw x23, x7, x0
+subw	64	41f003bb	7,0,31	subw x7, x0, x31
+sllw	64	001f903b	0,31,1	sllw x0, x31, x1
+sllw	64	00809fbb	31,1,8	sllw x31, x1, x8
+sllw	64	00f410bb	1,8,15	sllw x1, x8, x15
+sllw	64	0107943b	8,15,16	sllw x8, x15, x16
+sllw	64	017817bb	15,16,23	sllw x15, x16, x23
+sllw	64	007b983b	16,23,7	sllw x16, x23, x7
+sllw	64	00039bbb	23,7,0	sllw x23, x7, x0
+sllw	64	01f013bb	7,0,31	sllw x7, x0, x31
+srlw	64	001fd03b	0,31,1	srlw x0, x31, x1
+srlw	64	0080dfbb	31,1,8	srlw x31, x1, x8
+srlw	64	00f450bb	1,8,15	srlw x1, x8, x15
+srlw	64	0107d43b	8,15,16	srlw x8, x15, x16
+srlw	64	017857bb	15,16,23	srlw x15, x16, x23
+srlw	64	007bd83b	16,23,7	srlw x16, x23, x7
+srlw	64	0003dbbb	23,7,0	srlw x23, x7, x0
+srlw	64	01f053bb	7,0,31	srlw x7, x0, x31
+sraw	64	401fd03b	0,31,1	sraw x0, x31, x1
+sraw	64	4080dfbb	31,1,8	sraw x31, x1, x8
+sraw	64	40f450bb	1,8,15	sraw x1, x8, x15
+sraw	64	4107d43b	8,15,16	sraw x8, x15, x16
+sraw	64	417857bb	15,16,23	sraw x15, x16, x23
+sraw	64	407bd83b	16,23,7	sraw x16, x23, x7
+sraw	64	4003dbbb	23,7,0	sraw x23, x7, x0
+sraw	64	41f053bb	7,0,31	sraw x7, x0, x31
+mul	64	021f8033	0,31,1	mul x0, x31, x1
+mul	64	02808fb3	31,1,8	mul x31, x1, x8
+mul	64	02f400b3	1,8,15	mul x1, x8, x15
+mul	64	03078433	8,15,16	mul x8, x15, x16
+mul	64	037807b3	15,16,23	mul x15, x16, x23
+mul	64	027b8833	16,23,7	mul x16, x23, x7
+mul	64	02038bb3	23,7,0	mul x23, x7, x0
+mul	64	03f003b3	7,0,31	mul x7, x0, x31
+mulh	64	021f9033	0,31,1	mulh x0, x31, x1
+mulh	64	02809fb3	31,1,8	mulh x31, x1, x8
+mulh	64	02f410b3	1,8,15	mulh x1, x8, x15
+mulh	64	03079433	8,15,16	mulh x8, x15, x16
+mulh	64	037817b3	15,16,23	mulh x15, x16, x23
+mulh	64	027b9833	16,23,7	mulh x16, x23, x7
+mulh	64	02039bb3	23,7,0	mulh x23, x7, x0
+mulh	64	03f013b3	7,0,31	mulh x7, x0, x31
+mulhsu	64	021fa033	0,31,1	mulhsu x0, x31, x1
+mulhsu	64	0280afb3	31,1,8	mulhsu x31, x1, x8
+mulhsu	64	02f420b3	1,8,15	mulhsu x1, x8, x15
+mulhsu	64	0307a433	8,15,16	mulhsu x8, x15, x16
+mulhsu	64	037827b3	15,16,23	mulhsu x15, x16, x23
+mulhsu	64	027ba833	16,23,7	mulhsu x16, x23, x7
+mulhsu	64	0203abb3	23,7,0	mulhsu x23, x7, x0
+mulhsu	64	03f023b3	7,0,31	mulhsu x7, x0, x31
+mulhu	64	021fb033	0,31,1	mulhu x0, x31, x1
+mulhu	64	0280bfb3	31,1,8	mulhu x31, x1, x8
+mulhu	64	02f430b3	1,8,15	mulhu x1, x8, x15
+mulhu	64	0307b433	8,15,16	mulhu x8, x15, x16
+mulhu	64	037837b3	15,16,23	mulhu x15, x16, x23
+mulhu	64	027bb833	16,23,7	mulhu x16, x23, x7
+mulhu	64	0203bbb3	23,7,0	mulhu x23, x7, x0
+mulhu	64	03f033b3	7,0,31	mulhu x7, x0, x31
+div	64	021fc033	0,31,1	div x0, x31, x1
+div	64	0280cfb3	31,1,8	div x31, x1, x8
+div	64	02f440b3	1,8,15	div x1, x8, x15
+div	64	0307c433	8,15,16	div x8, x15, x16
+div	64	037847b3	15,16,23	div x15, x16, x23
+div	64	027bc833	16,23,7	div x16, x23, x7
+div	64	0203cbb3	23,7,0	div x23, x7, x0
+div	64	03f043b3	7,0,31	div x7, x0, x31
+divu	64	021fd033	0,31,1	divu x0, x31, x1
+divu	64	0280dfb3	31,1,8	divu x31, x1, x8
+divu	64	02f450b3	1,8,15	divu x1, x8, x15
+divu	64	0307d433	8,15,16	divu x8, x15, x16
+divu	64	037857b3	15,16,23	divu x15, x16, x23
+divu	64	027bd833	16,23,7	divu x16, x23, x7
+divu	64	0203dbb3	23,7,0	divu x23, x7, x0
+divu	64	03f053b3	7,0,31	divu x7, x0, x31
+rem	64	021fe033	0,31,1	rem x0, x31, x1
+rem	64	0280efb3	31,1,8	rem x31, x1, x8
+rem	64	02f460b3	1,8,15	rem x1, x8, x15
+rem	64	0307e433	8,15,16	rem x8, x15, x16
+rem	64	037867b3	15,16,23	rem x15, x16, x23
+rem	64	027be833	16,23,7	rem x16, x23, x7
+rem	64	0203ebb3	23,7,0	rem x23, x7, x0
+rem	64	03f063b3	7,0,31	rem x7, x0, x31
+remu	64	021ff033	0,31,1	remu x0, x31, x1
+remu	64	0280ffb3	31,1,8	remu x31, x1, x8
+remu	64	02f470b3	1,8,15	remu x1, x8, x15
+remu	64	0307f433	8,15,16	remu x8, x15, x16
+remu	64	037877b3	15,16,23	remu x15, x16, x23
+remu	64	027bf833	16,23,7	remu x16, x23, x7
+remu	64	0203fbb3	23,7,0	remu x23, x7, x0
+remu	64	03f073b3	7,0,31	remu x7, x0, x31
+mulw	64	021f803b	0,31,1	mulw x0, x31, x1
+mulw	64	02808fbb	31,1,8	mulw x31, x1, x8
+mulw	64	02f400bb	1,8,15	mulw x1, x8, x15
+mulw	64	0307843b	8,15,16	mulw x8, x15, x16
+mulw	64	037807bb	15,16,23	mulw x15, x16, x23
+mulw	64	027b883b	16,23,7	mulw x16, x23, x7
+mulw	64	02038bbb	23,7,0	mulw x23, x7, x0
+mulw	64	03f003bb	7,0,31	mulw x7, x0, x31
+divw	64	021fc03b	0,31,1	divw x0, x31, x1
+divw	64	0280cfbb	31,1,8	divw x31, x1, x8
+divw	64	02f440bb	1,8,15	divw x1, x8, x15
+divw	64	0307c43b	8,15,16	divw x8, x15, x16
+divw	64	037847bb	15,16,23	divw x15, x16, x23
+divw	64	027bc83b	16,23,7	divw x16, x23, x7
+divw	64	0203cbbb	23,7,0	divw x23, x7, x0
+divw	64	03f043bb	7,0,31	divw x7, x0, x31
+divuw	64	021fd03b	0,31,1	divuw x0, x31, x1
+divuw	64	0280dfbb	31,1,8	divuw x31, x1, x8
+divuw	64	02f450bb	1,8,15	divuw x1, x8, x15
+divuw	64	0307d43b	8,15,16	divuw x8, x15, x16
+divuw	64	037857bb	15,16,23	divuw x15, x16, x23
+divuw	64	027bd83b	16,23,7	divuw x16, x23, x7
+divuw	64	0203dbbb	23,7,0	divuw x23, x7, x0
+divuw	64	03f053bb	7,0,31	divuw x7, x0, x31
+remw	64	021fe03b	0,31,1	remw x0, x31, x1
+remw	64	0280efbb	31,1,8	remw x31, x1, x8
+remw	64	02f460bb	1,8,15	remw x1, x8, x15
+remw	64	0307e43b	8,15,16	remw x8, x15, x16
+remw	64	037867bb	15,16,23	remw x15, x16, x23
+remw	64	027be83b	16,23,7	remw x16, x23, x7
+remw	64	0203ebbb	23,7,0	remw x23, x7, x0
+remw	64	03f063bb	7,0,31	remw x7, x0, x31
+remuw	64	021ff03b	0,31,1	remuw x0, x31, x1
+remuw	64	0280ffbb	31,1,8	remuw x31, x1, x8
+remuw	64	02f470bb	1,8,15	remuw x1, x8, x15
+remuw	64	0307f43b	8,15,16	remuw x8, x15, x16
+remuw	64	037877bb	15,16,23	remuw x15, x16, x23
+remuw	64	027bf83b	16,23,7	remuw x16, x23, x7
+remuw	64	0203fbbb	23,7,0	remuw x23, x7, x0
+remuw	64	03f073bb	7,0,31	remuw x7, x0, x31
+lr.w	64	100fa02f	0,0,31	lr.w x0, (x31)
+lr.w	64	1200afaf	1,31,1	lr.w.rl x31, (x1)
+lr.w	64	140420af	2,1,8	lr.w.aq x1, (x8)
+lr.w	64	1607a42f	3,8,15	lr.w.aqrl x8, (x15)
+lr.w	64	100827af	0,15,16	lr.w x15, (x16)
+lr.w	64	120ba82f	1,16,23	lr.w.rl x16, (x23)
+lr.w	64	1403abaf	2,23,7	lr.w.aq x23, (x7)
+lr.w	64	160023af	3,7,0	lr.w.aqrl x7, (x0)
+sc.w	64	181fa02f	0,0,31,1	sc.w x0, x1, (x31)
+sc.w	64	1a80afaf	1,31,1,8	sc.w.rl x31, x8, (x1)
+sc.w	64	1cf420af	2,1,8,15	sc.w.aq x1, x15, (x8)
+sc.w	64	1f07a42f	3,8,15,16	sc.w.aqrl x8, x16, (x15)
+sc.w	64	197827af	0,15,16,23	sc.w x15, x23, (x16)
+sc.w	64	1a7ba82f	1,16,23,7	sc.w.rl x16, x7, (x23)
+sc.w	64	1c03abaf	2,23,7,0	sc.w.aq x23, x0, (x7)
+sc.w	64	1ff023af	3,7,0,31	sc.w.aqrl x7, x31, (x0)
+amoswap.w	64	081fa02f	0,0,31,1	amoswap.w x0, x1, (x31)
+amoswap.w	64	0a80afaf	1,31,1,8	amoswap.w.rl x31, x8, (x1)
+amoswap.w	64	0cf420af	2,1,8,15	amoswap.w.aq x1, x15, (x8)
+amoswap.w	64	0f07a42f	3,8,15,16	amoswap.w.aqrl x8, x16, (x15)
+amoswap.w	64	097827af	0,15,16,23	amoswap.w x15, x23, (x16)
+amoswap.w	64	0a7ba82f	1,16,23,7	amoswap.w.rl x16, x7, (x23)
+amoswap.w	64	0c03abaf	2,23,7,0	amoswap.w.aq x23, x0, (x7)
+amoswap.w	64	0ff023af	3,7,0,31	amoswap.w.aqrl x7, x31, (x0)
+amoadd.w	64	001fa02f	0,0,31,1	amoadd.w x0, x1, (x31)
+amoadd.w	64	0280afaf	1,31,1,8	amoadd.w.rl x31, x8, (x1)
+amoadd.w	64	04f420af	2,1,8,15	amoadd.w.aq x1, x15, (x8)
+amoadd.w	64	0707a42f	3,8,15,16	amoadd.w.aqrl x8, x16, (x15)
+amoadd.w	64	017827af	0,15,16,23	amoadd.w x15, x23, (x16)
+amoadd.w	64	027ba82f	1,16,23,7	amoadd.w.rl x16, x7, (x23)
+amoadd.w	64	0403abaf	2,23,7,0	amoadd.w.aq x23, x0, (x7)
+amoadd.w	64	07f023af	3,7,0,31	amoadd.w.aqrl x7, x31, (x0)
+amoand.w	64	601fa02f	0,0,31,1	amoand.w x0, x1, (x31)
+amoand.w	64	6280afaf	1,31,1,8	amoand.w.rl x31, x8, (x1)
+amoand.w	64	64f420af	2,1,8,15	amoand.w.aq x1, x15, (x8)
+amoand.w	64	6707a42f	3,8,15,16	amoand.w.aqrl x8, x16, (x15)
+amoand.w	64	617827af	0,15,16,23	amoand.w x15, x23, (x16)
+amoand.w	64	627ba82f	1,16,23,7	amoand.w.rl x16, x7, (x23)
+amoand.w	64	6403abaf	2,23,7,0	amoand.w.aq x23, x0, (x7)
+amoand.w	64	67f023af	3,7,0,31	amoand.w.aqrl x7, x31, (x0)
+amoor.w	64	401fa02f	0,0,31,1	amoor.w x0, x1, (x31)
+amoor.w	64	4280afaf	1,31,1,8	amoor.w.rl x31, x8, (x1)
+amoor.w	64	44f420af	2,1,8,15	amoor.w.aq x1, x15, (x8)
+amoor.w	64	4707a42f	3,8,15,16	amoor.w.aqrl x8, x16, (x15)
+amoor.w	64	417827af	0,15,16,23	amoor.w x15, x23, (x16)
+amoor.w	64	427ba82f	1,16,23,7	amoor.w.rl x16, x7, (x23)
+amoor.w	64	4403abaf	2,23,7,0	amoor.w.aq x23, x0, (x7)
+amoor.w	64	47f023af	3,7,0,31	amoor.w.aqrl x7, x31, (x0)
+amoxor.w	64	201fa02f	0,0,31,1	amoxor.w x0, x1, (x31)
+amoxor.w	64	2280afaf	1,31,1,8	amoxor.w.rl x31, x8, (x1)
+amoxor.w	64	24f420af	2,1,8,15	amoxor.w.aq x1, x15, (x8)
+amoxor.w	64	2707a42f	3,8,15,16	amoxor.w.aqrl x8, x16, (x15)
+amoxor.w	64	217827af	0,15,16,23	amoxor.w x15, x23, (x16)
+amoxor.w	64	227ba82f	1,16,23,7	amoxor.w.rl x16, x7, (x23)
+amoxor.w	64	2403abaf	2,23,7,0	amoxor.w.aq x23, x0, (x7)
+amoxor.w	64	27f023af	3,7,0,31	amoxor.w.aqrl x7, x31, (x0)
+amomax.w	64	a01fa02f	0,0,31,1	amomax.w x0, x1, (x31)
+amomax.w	64	a280afaf	1,31,1,8	amomax.w.rl x31, x8, (x1)
+amomax.w	64	a4f420af	2,1,8,15	amomax.w.aq x1, x15, (x8)
+amomax.w	64	a707a42f	3,8,15,16	amomax.w.aqrl x8, x16, (x15)
+amomax.w	64	a17827af	0,15,16,23	amomax.w x15, x23, (x16)
+amomax.w	64	a27ba82f	1,16,23,7	amomax.w.rl x16, x7, (x23)
+amomax.w	64	a403abaf	2,23,7,0	amomax.w.aq x23, x0, (x7)
+amomax.w	64	a7f023af	3,7,0,31	amomax.w.aqrl x7, x31, (x0)
+amomaxu.w	64	e01fa02f	0,0,31,1	amomaxu.w x0, x1, (x31)
+amomaxu.w	64	e280afaf	1,31,1,8	amomaxu.w.rl x31, x8, (x1)
+amomaxu.w	64	e4f420af	2,1,8,15	amomaxu.w.aq x1, x15, (x8)
+amomaxu.w	64	e707a42f	3,8,15,16	amomaxu.w.aqrl x8, x16, (x15)
+amomaxu.w	64	e17827af	0,15,16,23	amomaxu.w x15, x23, (x16)
+amomaxu.w	64	e27ba82f	1,16,23,7	amomaxu.w.rl x16, x7, (x23)
+amomaxu.w	64	e403abaf	2,23,7,0	amomaxu.w.aq x23, x0, (x7)
+amomaxu.w	64	e7f023af	3,7,0,31	amomaxu.w.aqrl x7, x31, (x0)
+amomin.w	64	801fa02f	0,0,31,1	amomin.w x0, x1, (x31)
+amomin.w	64	8280afaf	1,31,1,8	amomin.w.rl x31, x8, (x1)
+amomin.w	64	84f420af	2,1,8,15	amomin.w.aq x1, x15, (x8)
+amomin.w	64	8707a42f	3,8,15,16	amomin.w.aqrl x8, x16, (x15)
+amomin.w	64	817827af	0,15,16,23	amomin.w x15, x23, (x16)
+amomin.w	64	827ba82f	1,16,23,7	amomin.w.rl x16, x7, (x23)
+amomin.w	64	8403abaf	2,23,7,0	amomin.w.aq x23, x0, (x7)
+amomin.w	64	87f023af	3,7,0,31	amomin.w.aqrl x7, x31, (x0)
+amominu.w	64	c01fa02f	0,0,31,1	amominu.w x0, x1, (x31)
+amominu.w	64	c280afaf	1,31,1,8	amominu.w.rl x31, x8, (x1)
+amominu.w	64	c4f420af	2,1,8,15	amominu.w.aq x1, x15, (x8)
+amominu.w	64	c707a42f	3,8,15,16	amominu.w.aqrl x8, x16, (x15)
+amominu.w	64	c17827af	0,15,16,23	amominu.w x15, x23, (x16)
+amominu.w	64	c27ba82f	1,16,23,7	amominu.w.rl x16, x7, (x23)
+amominu.w	64	c403abaf	2,23,7,0	amominu.w.aq x23, x0, (x7)
+amominu.w	64	c7f023af	3,7,0,31	amominu.w.aqrl x7, x31, (x0)
+lr.d	64	100fb02f	0,0,31	lr.d x0, (x31)
+lr.d	64	1200bfaf	1,31,1	lr.d.rl x31, (x1)
+lr.d	64	140430af	2,1,8	lr.d.aq x1, (x8)
+lr.d	64	1607b42f	3,8,15	lr.d.aqrl x8, (x15)
+lr.d	64	100837af	0,15,16	lr.d x15, (x16)
+lr.d	64	120bb82f	1,16,23	lr.d.rl x16, (x23)
+lr.d	64	1403bbaf	2,23,7	lr.d.aq x23, (x7)
+lr.d	64	160033af	3,7,0	lr.d.aqrl x7, (x0)
+sc.d	64	181fb02f	0,0,31,1	sc.d x0, x1, (x31)
+sc.d	64	1a80bfaf	1,31,1,8	sc.d.rl x31, x8, (x1)
+sc.d	64	1cf430af	2,1,8,15	sc.d.aq x1, x15, (x8)
+sc.d	64	1f07b42f	3,8,15,16	sc.d.aqrl x8, x16, (x15)
+sc.d	64	197837af	0,15,16,23	sc.d x15, x23, (x16)
+sc.d	64	1a7bb82f	1,16,23,7	sc.d.rl x16, x7, (x23)
+sc.d	64	1c03bbaf	2,23,7,0	sc.d.aq x23, x0, (x7)
+sc.d	64	1ff033af	3,7,0,31	sc.d.aqrl x7, x31, (x0)
+amoswap.d	64	081fb02f	0,0,31,1	amoswap.d x0, x1, (x31)
+amoswap.d	64	0a80bfaf	1,31,1,8	amoswap.d.rl x31, x8, (x1)
+amoswap.d	64	0cf430af	2,1,8,15	amoswap.d.aq x1, x15, (x8)
+amoswap.d	64	0f07b42f	3,8,15,16	amoswap.d.aqrl x8, x16, (x15)
+amoswap.d	64	097837af	0,15,16,23	amoswap.d x15, x23, (x16)
+amoswap.d	64	0a7bb82f	1,16,23,7	amoswap.d.rl x16, x7, (x23)
+amoswap.d	64	0c03bbaf	2,23,7,0	amoswap.d.aq x23, x0, (x7)
+amoswap.d	64	0ff033af	3,7,0,31	amoswap.d.aqrl x7, x31, (x0)
+amoadd.d	64	001fb02f	0,0,31,1	amoadd.d x0, x1, (x31)
+amoadd.d	64	0280bfaf	1,31,1,8	amoadd.d.rl x31, x8, (x1)
+amoadd.d	64	04f430af	2,1,8,15	amoadd.d.aq x1, x15, (x8)
+amoadd.d	64	0707b42f	3,8,15,16	amoadd.d.aqrl x8, x16, (x15)
+amoadd.d	64	017837af	0,15,16,23	amoadd.d x15, x23, (x16)
+amoadd.d	64	027bb82f	1,16,23,7	amoadd.d.rl x16, x7, (x23)
+amoadd.d	64	0403bbaf	2,23,7,0	amoadd.d.aq x23, x0, (x7)
+amoadd.d	64	07f033af	3,7,0,31	amoadd.d.aqrl x7, x31, (x0)
+amoand.d	64	601fb02f	0,0,31,1	amoand.d x0, x1, (x31)
+amoand.d	64	6280bfaf	1,31,1,8	amoand.d.rl x31, x8, (x1)
+amoand.d	64	64f430af	2,1,8,15	amoand.d.aq x1, x15, (x8)
+amoand.d	64	6707b42f	3,8,15,16	amoand.d.aqrl x8, x16, (x15)
+amoand.d	64	617837af	0,15,16,23	amoand.d x15, x23, (x16)
+amoand.d	64	627bb82f	1,16,23,7	amoand.d.rl x16, x7, (x23)
+amoand.d	64	6403bbaf	2,23,7,0	amoand.d.aq x23, x0, (x7)
+amoand.d	64	67f033af	3,7,0,31	amoand.d.aqrl x7, x31, (x0)
+amoor.d	64	401fb02f	0,0,31,1	amoor.d x0, x1, (x31)
+amoor.d	64	4280bfaf	1,31,1,8	amoor.d.rl x31, x8, (x1)
+amoor.d	64	44f430af	2,1,8,15	amoor.d.aq x1, x15, (x8)
+amoor.d	64	4707b42f	3,8,15,16	amoor.d.aqrl x8, x16, (x15)
+amoor.d	64	417837af	0,15,16,23	amoor.d x15, x23, (x16)
+amoor.d	64	427bb82f	1,16,23,7	amoor.d.rl x16, x7, (x23)
+amoor.d	64	4403bbaf	2,23,7,0	amoor.d.aq x23, x0, (x7)
+amoor.d	64	47f033af	3,7,0,31	amoor.d.aqrl x7, x31, (x0)
+amoxor.d	64	201fb02f	0,0,31,1	amoxor.d x0, x1, (x31)
+amoxor.d	64	2280bfaf	1,31,1,8	amoxor.d.rl x31, x8, (x1)
+amoxor.d	64	24f430af	2,1,8,15	amoxor.d.aq x1, x15, (x8)
+amoxor.d	64	2707b42f	3,8,15,16	amoxor.d.aqrl x8, x16, (x15)
+amoxor.d	64	217837af	0,15,16,23	amoxor.d x15, x23, (x16)
+amoxor.d	64	227bb82f	1,16,23,7	amoxor.d.rl x16, x7, (x23)
+amoxor.d	64	2403bbaf	2,23,7,0	amoxor.d.aq x23, x0, (x7)
+amoxor.d	64	27f033af	3,7,0,31	amoxor.d.aqrl x7, x31, (x0)
+amomax.d	64	a01fb02f	0,0,31,1	amomax.d x0, x1, (x31)
+amomax.d	64	a280bfaf	1,31,1,8	amomax.d.rl x31, x8, (x1)
+amomax.d	64	a4f430af	2,1,8,15	amomax.d.aq x1, x15, (x8)
+amomax.d	64	a707b42f	3,8,15,16	amomax.d.aqrl x8, x16, (x15)
+amomax.d	64	a17837af	0,15,16,23	amomax.d x15, x23, (x16)
+amomax.d	64	a27bb82f	1,16,23,7	amomax.d.rl x16, x7, (x23)
+amomax.d	64	a403bbaf	2,23,7,0	amomax.d.aq x23, x0, (x7)
+amomax.d	64	a7f033af	3,7,0,31	amomax.d.aqrl x7, x31, (x0)
+amomaxu.d	64	e01fb02f	0,0,31,1	amomaxu.d x0, x1, (x31)
+amomaxu.d	64	e280bfaf	1,31,1,8	amomaxu.d.rl x31, x8, (x1)
+amomaxu.d	64	e4f430af	2,1,8,15	amomaxu.d.aq x1, x15, (x8)
+amomaxu.d	64	e707b42f	3,8,15,16	amomaxu.d.aqrl x8, x16, (x15)
+amomaxu.d	64	e17837af	0,15,16,23	amomaxu.d x15, x23, (x16)
+amomaxu.d	64	e27bb82f	1,16,23,7	amomaxu.d.rl x16, x7, (x23)
+amomaxu.d	64	e403bbaf	2,23,7,0	amomaxu.d.aq x23, x0, (x7)
+amomaxu.d	64	e7f033af	3,7,0,31	amomaxu.d.aqrl x7, x31, (x0)
+amomin.d	64	801fb02f	0,0,31,1	amomin.d x0, x1, (x31)
+amomin.d	64	8280bfaf	1,31,1,8	amomin.d.rl x31, x8, (x1)
+amomin.d	64	84f430af	2,1,8,15	amomin.d.aq x1, x15, (x8)
+amomin.d	64	8707b42f	3,8,15,16	amomin.d.aqrl x8, x16, (x15)
+amomin.d	64	817837af	0,15,16,23	amomin.d x15, x23, (x16)
+amomin.d	64	827bb82f	1,16,23,7	amomin.d.rl x16, x7, (x23)
+amomin.d	64	8403bbaf	2,23,7,0	amomin.d.aq x23, x0, (x7)
+amomin.d	64	87f033af	3,7,0,31	amomin.d.aqrl x7, x31, (x0)
+amominu.d	64	c01fb02f	0,0,31,1	amominu.d x0, x1, (x31)
+amominu.d	64	c280bfaf	1,31,1,8	amominu.d.rl x31, x8, (x1)
+amominu.d	64	c4f430af	2,1,8,15	amominu.d.aq x1, x15, (x8)
+amominu.d	64	c707b42f	3,8,15,16	amominu.d.aqrl x8, x16, (x15)
+amominu.d	64	c17837af	0,15,16,23	amominu.d x15, x23, (x16)
+amominu.d	64	c27bb82f	1,16,23,7	amominu.d.rl x16, x7, (x23)
+amominu.d	64	c403bbaf	2,23,7,0	amominu.d.aq x23, x0, (x7)
+amominu.d	64	c7f033af	3,7,0,31	amominu.d.aqrl x7, x31, (x0)
+flw	64	800fa007	0,31,-2048	flw f0, -2048(x31)
+flw	64	fff0af87	31,1,-1	flw f31, -1(x1)
+flw	64	00042087	1,8,0	flw f1, 0(x8)
+flw	64	0017a407	8,15,1	flw f8, 1(x15)
+flw	64	01f82787	15,16,31	flw f15, 31(x16)
+flw	64	7ffba807	16,23,2047	flw f16, 2047(x23)
+flw	64	ff03ab87	23,7,-16	flw f23, -16(x7)
+flw	64	40002387	7,0,1024	flw f7, 1024(x0)
+fsw	64	801fa027	31,1,-2048	fsw f1, -2048(x31)
+fsw	64	fe80afa7	1,8,-1	fsw f8, -1(x1)
+fsw	64	00f42027	8,15,0	fsw f15, 0(x8)
+fsw	64	0107a0a7	15,16,1	fsw f16, 1(x15)
+fsw	64	01782fa7	16,23,31	fsw f23, 31(x16)
+fsw	64	7e7bafa7	23,7,2047	fsw f7, 2047(x23)
+fsw	64	fe03a827	7,0,-16	fsw f0, -16(x7)
+fsw	64	41f02027	0,31,1024	fsw f31, 1024(x0)
+fmadd.s	64	401f8043	0,31,1,8,0	fmadd.s f0, f31, f1, f8, rne
+fmadd.s	64	78809fc3	31,1,8,15,1	fmadd.s f31, f1, f8, f15, rtz
+fmadd.s	64	80f420c3	1,8,15,16,2	fmadd.s f1, f8, f15, f16, rdn
+fmadd.s	64	b907b443	8,15,16,23,3	fmadd.s f8, f15, f16, f23, rup
+fmadd.s	64	397847c3	15,16,23,7,4	fmadd.s f15, f16, f23, f7, rmm
+fmadd.s	64	007bf843	16,23,7,0,7	fmadd.s f16, f23, f7, f0, dyn
+fmadd.s	64	f8038bc3	23,7,0,31,0	fmadd.s f23, f7, f0, f31, rne
+fmadd.s	64	09f073c3	7,0,31,1,7	fmadd.s f7, f0, f31, f1, dyn
+fmsub.s	64	401f8047	0,31,1,8,0	fmsub.s f0, f31, f1, f8, rne
+fmsub.s	64	78809fc7	31,1,8,15,1	fmsub.s f31, f1, f8, f15, rtz
+fmsub.s	64	80f420c7	1,8,15,16,2	fmsub.s f1, f8, f15, f16, rdn
+fmsub.s	64	b907b447	8,15,16,23,3	fmsub.s f8, f15, f16, f23, rup
+fmsub.s	64	397847c7	15,16,23,7,4	fmsub.s f15, f16, f23, f7, rmm
+fmsub.s	64	007bf847	16,23,7,0,7	fmsub.s f16, f23, f7, f0, dyn
+fmsub.s	64	f8038bc7	23,7,0,31,0	fmsub.s f23, f7, f0, f31, rne
+fmsub.s	64	09f073c7	7,0,31,1,7	fmsub.s f7, f0, f31, f1, dyn
+fnmsub.s	64	401f804b	0,31,1,8,0	fnmsub.s f0, f31, f1, f8, rne
+fnmsub.s	64	78809fcb	31,1,8,15,1	fnmsub.s f31, f1, f8, f15, rtz
+fnmsub.s	64	80f420cb	1,8,15,16,2	fnmsub.s f1, f8, f15, f16, rdn
+fnmsub.s	64	b907b44b	8,15,16,23,3	fnmsub.s f8, f15, f16, f23, rup
+fnmsub.s	64	397847cb	15,16,23,7,4	fnmsub.s f15, f16, f23, f7, rmm
+fnmsub.s	64	007bf84b	16,23,7,0,7	fnmsub.s f16, f23, f7, f0, dyn
+fnmsub.s	64	f8038bcb	23,7,0,31,0	fnmsub.s f23, f7, f0, f31, rne
+fnmsub.s	64	09f073cb	7,0,31,1,7	fnmsub.s f7, f0, f31, f1, dyn
+fnmadd.s	64	401f804f	0,31,1,8,0	fnmadd.s f0, f31, f1, f8, rne
+fnmadd.s	64	78809fcf	31,1,8,15,1	fnmadd.s f31, f1, f8, f15, rtz
+fnmadd.s	64	80f420cf	1,8,15,16,2	fnmadd.s f1, f8, f15, f16, rdn
+fnmadd.s	64	b907b44f	8,15,16,23,3	fnmadd.s f8, f15, f16, f23, rup
+fnmadd.s	64	397847cf	15,16,23,7,4	fnmadd.s f15, f16, f23, f7, rmm
+fnmadd.s	64	007bf84f	16,23,7,0,7	fnmadd.s f16, f23, f7, f0, dyn
+fnmadd.s	64	f8038bcf	23,7,0,31,0	fnmadd.s f23, f7, f0, f31, rne
+fnmadd.s	64	09f073cf	7,0,31,1,7	fnmadd.s f7, f0, f31, f1, dyn
+fadd.s	64	001f8053	0,31,1,0	fadd.s f0, f31, f1, rne
+fadd.s	64	00809fd3	31,1,8,1	fadd.s f31, f1, f8, rtz
+fadd.s	64	00f420d3	1,8,15,2	fadd.s f1, f8, f15, rdn
+fadd.s	64	0107b453	8,15,16,3	fadd.s f8, f15, f16, rup
+fadd.s	64	017847d3	15,16,23,4	fadd.s f15, f16, f23, rmm
+fadd.s	64	007bf853	16,23,7,7	fadd.s f16, f23, f7, dyn
+fadd.s	64	00038bd3	23,7,0,0	fadd.s f23, f7, f0, rne
+fadd.s	64	01f073d3	7,0,31,7	fadd.s f7, f0, f31, dyn
+fsub.s	64	081f8053	0,31,1,0	fsub.s f0, f31, f1, rne
+fsub.s	64	08809fd3	31,1,8,1	fsub.s f31, f1, f8, rtz
+fsub.s	64	08f420d3	1,8,15,2	fsub.s f1, f8, f15, rdn
+fsub.s	64	0907b453	8,15,16,3	fsub.s f8, f15, f16, rup
+fsub.s	64	097847d3	15,16,23,4	fsub.s f15, f16, f23, rmm
+fsub.s	64	087bf853	16,23,7,7	fsub.s f16, f23, f7, dyn
+fsub.s	64	08038bd3	23,7,0,0	fsub.s f23, f7, f0, rne
+fsub.s	64	09f073d3	7,0,31,7	fsub.s f7, f0, f31, dyn
+fmul.s	64	101f8053	0,31,1,0	fmul.s f0, f31, f1, rne
+fmul.s	64	10809fd3	31,1,8,1	fmul.s f31, f1, f8, rtz
+fmul.s	64	10f420d3	1,8,15,2	fmul.s f1, f8, f15, rdn
+fmul.s	64	1107b453	8,15,16,3	fmul.s f8, f15, f16, rup
+fmul.s	64	117847d3	15,16,23,4	fmul.s f15, f16, f23, rmm
+fmul.s	64	107bf853	16,23,7,7	fmul.s f16, f23, f7, dyn
+fmul.s	64	10038bd3	23,7,0,0	fmul.s f23, f7, f0, rne
+fmul.s	64	11f073d3	7,0,31,7	fmul.s f7, f0, f31, dyn
+fdiv.s	64	181f8053	0,31,1,0	fdiv.s f0, f31, f1, rne
+fdiv.s	64	18809fd3	31,1,8,1	fdiv.s f31, f1, f8, rtz
+fdiv.s	64	18f420d3	1,8,15,2	fdiv.s f1, f8, f15, rdn
+fdiv.s	64	1907b453	8,15,16,3	fdiv.s f8, f15, f16, rup
+fdiv.s	64	197847d3	15,16,23,4	fdiv.s f15, f16, f23, rmm
+fdiv.s	64	187bf853	16,23,7,7	fdiv.s f16, f23, f7, dyn
+fdiv.s	64	18038bd3	23,7,0,0	fdiv.s f23, f7, f0, rne
+fdiv.s	64	19f073d3	7,0,31,7	fdiv.s f7, f0, f31, dyn
+fsqrt.s	64	580f8053	0,31,0	fsqrt.s f0, f31, rne
+fsqrt.s	64	58009fd3	31,1,1	fsqrt.s f31, f1, rtz
+fsqrt.s	64	580420d3	1,8,2	fsqrt.s f1, f8, rdn
+fsqrt.s	64	5807b453	8,15,3	fsqrt.s f8, f15, rup
+fsqrt.s	64	580847d3	15,16,4	fsqrt.s f15, f16, rmm
+fsqrt.s	64	580bf853	16,23,7	fsqrt.s f16, f23, dyn
+fsqrt.s	64	58038bd3	23,7,0	fsqrt.s f23, f7, rne
+fsqrt.s	64	580073d3	7,0,7	fsqrt.s f7, f0, dyn
+fsgnj.s	64	201f8053	0,31,1	fsgnj.s f0, f31, f1
+fsgnj.s	64	20808fd3	31,1,8	fsgnj.s f31, f1, f8
+fsgnj.s	64	20f400d3	1,8,15	fsgnj.s f1, f8, f15
+fsgnj.s	64	21078453	8,15,16	fsgnj.s f8, f15, f16
+fsgnj.s	64	217807d3	15,16,23	fsgnj.s f15, f16, f23
+fsgnj.s	64	207b8853	16,23,7	fsgnj.s f16, f23, f7
+fsgnj.s	64	20038bd3	23,7,0	fsgnj.s f23, f7, f0
+fsgnj.s	64	21f003d3	7,0,31	fsgnj.s f7, f0, f31
+fsgnjn.s	64	201f9053	0,31,1	fsgnjn.s f0, f31, f1
+fsgnjn.s	64	20809fd3	31,1,8	fsgnjn.s f31, f1, f8
+fsgnjn.s	64	20f410d3	1,8,15	fsgnjn.s f1, f8, f15
+fsgnjn.s	64	21079453	8,15,16	fsgnjn.s f8, f15, f16
+fsgnjn.s	64	217817d3	15,16,23	fsgnjn.s f15, f16, f23
+fsgnjn.s	64	207b9853	16,23,7	fsgnjn.s f16, f23, f7
+fsgnjn.s	64	20039bd3	23,7,0	fsgnjn.s f23, f7, f0
+fsgnjn.s	64	21f013d3	7,0,31	fsgnjn.s f7, f0, f31
+fsgnjx.s	64	201fa053	0,31,1	fsgnjx.s f0, f31, f1
+fsgnjx.s	64	2080afd3	31,1,8	fsgnjx.s f31, f1, f8
+fsgnjx.s	64	20f420d3	1,8,15	fsgnjx.s f1, f8, f15
+fsgnjx.s	64	2107a453	8,15,16	fsgnjx.s f8, f15, f16
+fsgnjx.s	64	217827d3	15,16,23	fsgnjx.s f15, f16, f23
+fsgnjx.s	64	207ba853	16,23,7	fsgnjx.s f16, f23, f7
+fsgnjx.s	64	2003abd3	23,7,0	fsgnjx.s f23, f7, f0
+fsgnjx.s	64	21f023d3	7,0,31	fsgnjx.s f7, f0, f31
+fmin.s	64	281f8053	0,31,1	fmin.s f0, f31, f1
+fmin.s	64	28808fd3	31,1,8	fmin.s f31, f1, f8
+fmin.s	64	28f400d3	1,8,15	fmin.s f1, f8, f15
+fmin.s	64	29078453	8,15,16	fmin.s f8, f15, f16
+fmin.s	64	297807d3	15,16,23	fmin.s f15, f16, f23
+fmin.s	64	287b8853	16,23,7	fmin.s f16, f23, f7
+fmin.s	64	28038bd3	23,7,0	fmin.s f23, f7, f0
+fmin.s	64	29f003d3	7,0,31	fmin.s f7, f0, f31
+fmax.s	64	281f9053	0,31,1	fmax.s f0, f31, f1
+fmax.s	64	28809fd3	31,1,8	fmax.s f31, f1, f8
+fmax.s	64	28f410d3	1,8,15	fmax.s f1, f8, f15
+fmax.s	64	29079453	8,15,16	fmax.s f8, f15, f16
+fmax.s	64	297817d3	15,16,23	fmax.s f15, f16, f23
+fmax.s	64	287b9853	16,23,7	fmax.s f16, f23, f7
+fmax.s	64	28039bd3	23,7,0	fmax.s f23, f7, f0
+fmax.s	64	29f013d3	7,0,31	fmax.s f7, f0, f31
+fcvt.w.s	64	c00f8053	0,31,0	fcvt.w.s x0, f31, rne
+fcvt.w.s	64	c0009fd3	31,1,1	fcvt.w.s x31, f1, rtz
+fcvt.w.s	64	c00420d3	1,8,2	fcvt.w.s x1, f8, rdn
+fcvt.w.s	64	c007b453	8,15,3	fcvt.w.s x8, f15, rup
+fcvt.w.s	64	c00847d3	15,16,4	fcvt.w.s x15, f16, rmm
+fcvt.w.s	64	c00bf853	16,23,7	fcvt.w.s x16, f23, dyn
+fcvt.w.s	64	c0038bd3	23,7,0	fcvt.w.s x23, f7, rne
+fcvt.w.s	64	c00073d3	7,0,7	fcvt.w.s x7, f0, dyn
+fcvt.wu.s	64	c01f8053	0,31,0	fcvt.wu.s x0, f31, rne
+fcvt.wu.s	64	c0109fd3	31,1,1	fcvt.wu.s x31, f1, rtz
+fcvt.wu.s	64	c01420d3	1,8,2	fcvt.wu.s x1, f8, rdn
+fcvt.wu.s	64	c017b453	8,15,3	fcvt.wu.s x8, f15, rup
+fcvt.wu.s	64	c01847d3	15,16,4	fcvt.wu.s x15, f16, rmm
+fcvt.wu.s	64	c01bf853	16,23,7	fcvt.wu.s x16, f23, dyn
+fcvt.wu.s	64	c0138bd3	23,7,0	fcvt.wu.s x23, f7, rne
+fcvt.wu.s	64	c01073d3	7,0,7	fcvt.wu.s x7, f0, dyn
+fmv.x.w	64	e00f8053	0,31	fmv.x.w x0, f31
+fmv.x.w	64	e0008fd3	31,1	fmv.x.w x31, f1
+fmv.x.w	64	e00400d3	1,8	fmv.x.w x1, f8
+fmv.x.w	64	e0078453	8,15	fmv.x.w x8, f15
+fmv.x.w	64	e00807d3	15,16	fmv.x.w x15, f16
+fmv.x.w	64	e00b8853	16,23	fmv.x.w x16, f23
+fmv.x.w	64	e0038bd3	23,7	fmv.x.w x23, f7
+fmv.x.w	64	e00003d3	7,0	fmv.x.w x7, f0
+feq.s	64	a01fa053	0,31,1	feq.s x0, f31, f1
+feq.s	64	a080afd3	31,1,8	feq.s x31, f1, f8
+feq.s	64	a0f420d3	1,8,15	feq.s x1, f8, f15
+feq.s	64	a107a453	8,15,16	feq.s x8, f15, f16
+feq.s	64	a17827d3	15,16,23	feq.s x15, f16, f23
+feq.s	64	a07ba853	16,23,7	feq.s x16, f23, f7
+feq.s	64	a003abd3	23,7,0	feq.s x23, f7, f0
+feq.s	64	a1f023d3	7,0,31	feq.s x7, f0, f31
+flt.s	64	a01f9053	0,31,1	flt.s x0, f31, f1
+flt.s	64	a0809fd3	31,1,8	flt.s x31, f1, f8
+flt.s	64	a0f410d3	1,8,15	flt.s x1, f8, f15
+flt.s	64	a1079453	8,15,16	flt.s x8, f15, f16
+flt.s	64	a17817d3	15,16,23	flt.s x15, f16, f23
+flt.s	64	a07b9853	16,23,7	flt.s x16, f23, f7
+flt.s	64	a0039bd3	23,7,0	flt.s x23, f7, f0
+flt.s	64	a1f013d3	7,0,31	flt.s x7, f0, f31
+fle.s	64	a01f8053	0,31,1	fle.s x0, f31, f1
+fle.s	64	a0808fd3	31,1,8	fle.s x31, f1, f8
+fle.s	64	a0f400d3	1,8,15	fle.s x1, f8, f15
+fle.s	64	a1078453	8,15,16	fle.s x8, f15, f16
+fle.s	64	a17807d3	15,16,23	fle.s x15, f16, f23
+fle.s	64	a07b8853	16,23,7	fle.s x16, f23, f7
+fle.s	64	a0038bd3	23,7,0	fle.s x23, f7, f0
+fle.s	64	a1f003d3	7,0,31	fle.s x7, f0, f31
+fclass.s	64	e00f9053	0,31	fclass.s x0, f31
+fclass.s	64	e0009fd3	31,1	fclass.s x31, f1
+fclass.s	64	e00410d3	1,8	fclass.s x1, f8
+fclass.s	64	e0079453	8,15	fclass.s x8, f15
+fclass.s	64	e00817d3	15,16	fclass.s x15, f16
+fclass.s	64	e00b9853	16,23	fclass.s x16, f23
+fclass.s	64	e0039bd3	23,7	fclass.s x23, f7
+fclass.s	64	e00013d3	7,0	fclass.s x7, f0
+fcvt.s.w	64	d00f8053	0,31,0	fcvt.s.w f0, x31, rne
+fcvt.s.w	64	d0009fd3	31,1,1	fcvt.s.w f31, x1, rtz
+fcvt.s.w	64	d00420d3	1,8,2	fcvt.s.w f1, x8, rdn
+fcvt.s.w	64	d007b453	8,15,3	fcvt.s.w f8, x15, rup
+fcvt.s.w	64	d00847d3	15,16,4	fcvt.s.w f15, x16, rmm
+fcvt.s.w	64	d00bf853	16,23,7	fcvt.s.w f16, x23, dyn
+fcvt.s.w	64	d0038bd3	23,7,0	fcvt.s.w f23, x7, rne
+fcvt.s.w	64	d00073d3	7,0,7	fcvt.s.w f7, x0, dyn
+fcvt.s.wu	64	d01f8053	0,31,0	fcvt.s.wu f0, x31, rne
+fcvt.s.wu	64	d0109fd3	31,1,1	fcvt.s.wu f31, x1, rtz
+fcvt.s.wu	64	d01420d3	1,8,2	fcvt.s.wu f1, x8, rdn
+fcvt.s.wu	64	d017b453	8,15,3	fcvt.s.wu f8, x15, rup
+fcvt.s.wu	64	d01847d3	15,16,4	fcvt.s.wu f15, x16, rmm
+fcvt.s.wu	64	d01bf853	16,23,7	fcvt.s.wu f16, x23, dyn
+fcvt.s.wu	64	d0138bd3	23,7,0	fcvt.s.wu f23, x7, rne
+fcvt.s.wu	64	d01073d3	7,0,7	fcvt.s.wu f7, x0, dyn
+fmv.w.x	64	f00f8053	0,31	fmv.w.x f0, x31
+fmv.w.x	64	f0008fd3	31,1	fmv.w.x f31, x1
+fmv.w.x	64	f00400d3	1,8	fmv.w.x f1, x8
+fmv.w.x	64	f0078453	8,15	fmv.w.x f8, x15
+fmv.w.x	64	f00807d3	15,16	fmv.w.x f15, x16
+fmv.w.x	64	f00b8853	16,23	fmv.w.x f16, x23
+fmv.w.x	64	f0038bd3	23,7	fmv.w.x f23, x7
+fmv.w.x	64	f00003d3	7,0	fmv.w.x f7, x0
+fcvt.l.s	64	c02f8053	0,31,0	fcvt.l.s x0, f31, rne
+fcvt.l.s	64	c0209fd3	31,1,1	fcvt.l.s x31, f1, rtz
+fcvt.l.s	64	c02420d3	1,8,2	fcvt.l.s x1, f8, rdn
+fcvt.l.s	64	c027b453	8,15,3	fcvt.l.s x8, f15, rup
+fcvt.l.s	64	c02847d3	15,16,4	fcvt.l.s x15, f16, rmm
+fcvt.l.s	64	c02bf853	16,23,7	fcvt.l.s x16, f23, dyn
+fcvt.l.s	64	c0238bd3	23,7,0	fcvt.l.s x23, f7, rne
+fcvt.l.s	64	c02073d3	7,0,7	fcvt.l.s x7, f0, dyn
+fcvt.lu.s	64	c03f8053	0,31,0	fcvt.lu.s x0, f31, rne
+fcvt.lu.s	64	c0309fd3	31,1,1	fcvt.lu.s x31, f1, rtz
+fcvt.lu.s	64	c03420d3	1,8,2	fcvt.lu.s x1, f8, rdn
+fcvt.lu.s	64	c037b453	8,15,3	fcvt.lu.s x8, f15, rup
+fcvt.lu.s	64	c03847d3	15,16,4	fcvt.lu.s x15, f16, rmm
+fcvt.lu.s	64	c03bf853	16,23,7	fcvt.lu.s x16, f23, dyn
+fcvt.lu.s	64	c0338bd3	23,7,0	fcvt.lu.s x23, f7, rne
+fcvt.lu.s	64	c03073d3	7,0,7	fcvt.lu.s x7, f0, dyn
+fcvt.s.l	64	d02f8053	0,31,0	fcvt.s.l f0, x31, rne
+fcvt.s.l	64	d0209fd3	31,1,1	fcvt.s.l f31, x1, rtz
+fcvt.s.l	64	d02420d3	1,8,2	fcvt.s.l f1, x8, rdn
+fcvt.s.l	64	d027b453	8,15,3	fcvt.s.l f8, x15, rup
+fcvt.s.l	64	d02847d3	15,16,4	fcvt.s.l f15, x16, rmm
+fcvt.s.l	64	d02bf853	16,23,7	fcvt.s.l f16, x23, dyn
+fcvt.s.l	64	d0238bd3	23,7,0	fcvt.s.l f23, x7, rne
+fcvt.s.l	64	d02073d3	7,0,7	fcvt.s.l f7, x0, dyn
+fcvt.s.lu	64	d03f8053	0,31,0	fcvt.s.lu f0, x31, rne
+fcvt.s.lu	64	d0309fd3	31,1,1	fcvt.s.lu f31, x1, rtz
+fcvt.s.lu	64	d03420d3	1,8,2	fcvt.s.lu f1, x8, rdn
+fcvt.s.lu	64	d037b453	8,15,3	fcvt.s.lu f8, x15, rup
+fcvt.s.lu	64	d03847d3	15,16,4	fcvt.s.lu f15, x16, rmm
+fcvt.s.lu	64	d03bf853	16,23,7	fcvt.s.lu f16, x23, dyn
+fcvt.s.lu	64	d0338bd3	23,7,0	fcvt.s.lu f23, x7, rne
+fcvt.s.lu	64	d03073d3	7,0,7	fcvt.s.lu f7, x0, dyn
+fld	64	800fb007	0,31,-2048	fld f0, -2048(x31)
+fld	64	fff0bf87	31,1,-1	fld f31, -1(x1)
+fld	64	00043087	1,8,0	fld f1, 0(x8)
+fld	64	0017b407	8,15,1	fld f8, 1(x15)
+fld	64	01f83787	15,16,31	fld f15, 31(x16)
+fld	64	7ffbb807	16,23,2047	fld f16, 2047(x23)
+fld	64	ff03bb87	23,7,-16	fld f23, -16(x7)
+fld	64	40003387	7,0,1024	fld f7, 1024(x0)
+fsd	64	801fb027	31,1,-2048	fsd f1, -2048(x31)
+fsd	64	fe80bfa7	1,8,-1	fsd f8, -1(x1)
+fsd	64	00f43027	8,15,0	fsd f15, 0(x8)
+fsd	64	0107b0a7	15,16,1	fsd f16, 1(x15)
+fsd	64	01783fa7	16,23,31	fsd f23, 31(x16)
+fsd	64	7e7bbfa7	23,7,2047	fsd f7, 2047(x23)
+fsd	64	fe03b827	7,0,-16	fsd f0, -16(x7)
+fsd	64	41f03027	0,31,1024	fsd f31, 1024(x0)
+fmadd.d	64	421f8043	0,31,1,8,0	fmadd.d f0, f31, f1, f8, rne
+fmadd.d	64	7a809fc3	31,1,8,15,1	fmadd.d f31, f1, f8, f15, rtz
+fmadd.d	64	82f420c3	1,8,15,16,2	fmadd.d f1, f8, f15, f16, rdn
+fmadd.d	64	bb07b443	8,15,16,23,3	fmadd.d f8, f15, f16, f23, rup
+fmadd.d	64	3b7847c3	15,16,23,7,4	fmadd.d f15, f16, f23, f7, rmm
+fmadd.d	64	027bf843	16,23,7,0,7	fmadd.d f16, f23, f7, f0, dyn
+fmadd.d	64	fa038bc3	23,7,0,31,0	fmadd.d f23, f7, f0, f31, rne
+fmadd.d	64	0bf073c3	7,0,31,1,7	fmadd.d f7, f0, f31, f1, dyn
+fmsub.d	64	421f8047	0,31,1,8,0	fmsub.d f0, f31, f1, f8, rne
+fmsub.d	64	7a809fc7	31,1,8,15,1	fmsub.d f31, f1, f8, f15, rtz
+fmsub.d	64	82f420c7	1,8,15,16,2	fmsub.d f1, f8, f15, f16, rdn
+fmsub.d	64	bb07b447	8,15,16,23,3	fmsub.d f8, f15, f16, f23, rup
+fmsub.d	64	3b7847c7	15,16,23,7,4	fmsub.d f15, f16, f23, f7, rmm
+fmsub.d	64	027bf847	16,23,7,0,7	fmsub.d f16, f23, f7, f0, dyn
+fmsub.d	64	fa038bc7	23,7,0,31,0	fmsub.d f23, f7, f0, f31, rne
+fmsub.d	64	0bf073c7	7,0,31,1,7	fmsub.d f7, f0, f31, f1, dyn
+fnmsub.d	64	421f804b	0,31,1,8,0	fnmsub.d f0, f31, f1, f8, rne
+fnmsub.d	64	7a809fcb	31,1,8,15,1	fnmsub.d f31, f1, f8, f15, rtz
+fnmsub.d	64	82f420cb	1,8,15,16,2	fnmsub.d f1, f8, f15, f16, rdn
+fnmsub.d	64	bb07b44b	8,15,16,23,3	fnmsub.d f8, f15, f16, f23, rup
+fnmsub.d	64	3b7847cb	15,16,23,7,4	fnmsub.d f15, f16, f23, f7, rmm
+fnmsub.d	64	027bf84b	16,23,7,0,7	fnmsub.d f16, f23, f7, f0, dyn
+fnmsub.d	64	fa038bcb	23,7,0,31,0	fnmsub.d f23, f7, f0, f31, rne
+fnmsub.d	64	0bf073cb	7,0,31,1,7	fnmsub.d f7, f0, f31, f1, dyn
+fnmadd.d	64	421f804f	0,31,1,8,0	fnmadd.d f0, f31, f1, f8, rne
+fnmadd.d	64	7a809fcf	31,1,8,15,1	fnmadd.d f31, f1, f8, f15, rtz
+fnmadd.d	64	82f420cf	1,8,15,16,2	fnmadd.d f1, f8, f15, f16, rdn
+fnmadd.d	64	bb07b44f	8,15,16,23,3	fnmadd.d f8, f15, f16, f23, rup
+fnmadd.d	64	3b7847cf	15,16,23,7,4	fnmadd.d f15, f16, f23, f7, rmm
+fnmadd.d	64	027bf84f	16,23,7,0,7	fnmadd.d f16, f23, f7, f0, dyn
+fnmadd.d	64	fa038bcf	23,7,0,31,0	fnmadd.d f23, f7, f0, f31, rne
+fnmadd.d	64	0bf073cf	7,0,31,1,7	fnmadd.d f7, f0, f31, f1, dyn
+fadd.d	64	021f8053	0,31,1,0	fadd.d f0, f31, f1, rne
+fadd.d	64	02809fd3	31,1,8,1	fadd.d f31, f1, f8, rtz
+fadd.d	64	02f420d3	1,8,15,2	fadd.d f1, f8, f15, rdn
+fadd.d	64	0307b453	8,15,16,3	fadd.d f8, f15, f16, rup
+fadd.d	64	037847d3	15,16,23,4	fadd.d f15, f16, f23, rmm
+fadd.d	64	027bf853	16,23,7,7	fadd.d f16, f23, f7, dyn
+fadd.d	64	02038bd3	23,7,0,0	fadd.d f23, f7, f0, rne
+fadd.d	64	03f073d3	7,0,31,7	fadd.d f7, f0, f31, dyn
+fsub.d	64	0a1f8053	0,31,1,0	fsub.d f0, f31, f1, rne
+fsub.d	64	0a809fd3	31,1,8,1	fsub.d f31, f1, f8, rtz
+fsub.d	64	0af420d3	1,8,15,2	fsub.d f1, f8, f15, rdn
+fsub.d	64	0b07b453	8,15,16,3	fsub.d f8, f15, f16, rup
+fsub.d	64	0b7847d3	15,16,23,4	fsub.d f15, f16, f23, rmm
+fsub.d	64	0a7bf853	16,23,7,7	fsub.d f16, f23, f7, dyn
+fsub.d	64	0a038bd3	23,7,0,0	fsub.d f23, f7, f0, rne
+fsub.d	64	0bf073d3	7,0,31,7	fsub.d f7, f0, f31, dyn
+fmul.d	64	121f8053	0,31,1,0	fmul.d f0, f31, f1, rne
+fmul.d	64	12809fd3	31,1,8,1	fmul.d f31, f1, f8, rtz
+fmul.d	64	12f420d3	1,8,15,2	fmul.d f1, f8, f15, rdn
+fmul.d	64	1307b453	8,15,16,3	fmul.d f8, f15, f16, rup
+fmul.d	64	137847d3	15,16,23,4	fmul.d f15, f16, f23, rmm
+fmul.d	64	127bf853	16,23,7,7	fmul.d f16, f23, f7, dyn
+fmul.d	64	12038bd3	23,7,0,0	fmul.d f23, f7, f0, rne
+fmul.d	64	13f073d3	7,0,31,7	fmul.d f7, f0, f31, dyn
+fdiv.d	64	1a1f8053	0,31,1,0	fdiv.d f0, f31, f1, rne
+fdiv.d	64	1a809fd3	31,1,8,1	fdiv.d f31, f1, f8, rtz
+fdiv.d	64	1af420d3	1,8,15,2	fdiv.d f1, f8, f15, rdn
+fdiv.d	64	1b07b453	8,15,16,3	fdiv.d f8, f15, f16, rup
+fdiv.d	64	1b7847d3	15,16,23,4	fdiv.d f15, f16, f23, rmm
+fdiv.d	64	1a7bf853	16,23,7,7	fdiv.d f16, f23, f7, dyn
+fdiv.d	64	1a038bd3	23,7,0,0	fdiv.d f23, f7, f0, rne
+fdiv.d	64	1bf073d3	7,0,31,7	fdiv.d f7, f0, f31, dyn
+fsqrt.d	64	5a0f8053	0,31,0	fsqrt.d f0, f31, rne
+fsqrt.d	64	5a009fd3	31,1,1	fsqrt.d f31, f1, rtz
+fsqrt.d	64	5a0420d3	1,8,2	fsqrt.d f1, f8, rdn
+fsqrt.d	64	5a07b453	8,15,3	fsqrt.d f8, f15, rup
+fsqrt.d	64	5a0847d3	15,16,4	fsqrt.d f15, f16, rmm
+fsqrt.d	64	5a0bf853	16,23,7	fsqrt.d f16, f23, dyn
+fsqrt.d	64	5a038bd3	23,7,0	fsqrt.d f23, f7, rne
+fsqrt.d	64	5a0073d3	7,0,7	fsqrt.d f7, f0, dyn
+fsgnj.d	64	221f8053	0,31,1	fsgnj.d f0, f31, f1
+fsgnj.d	64	22808fd3	31,1,8	fsgnj.d f31, f1, f8
+fsgnj.d	64	22f400d3	1,8,15	fsgnj.d f1, f8, f15
+fsgnj.d	64	23078453	8,15,16	fsgnj.d f8, f15, f16
+fsgnj.d	64	237807d3	15,16,23	fsgnj.d f15, f16, f23
+fsgnj.d	64	227b8853	16,23,7	fsgnj.d f16, f23, f7
+fsgnj.d	64	22038bd3	23,7,0	fsgnj.d f23, f7, f0
+fsgnj.d	64	23f003d3	7,0,31	fsgnj.d f7, f0, f31
+fsgnjn.d	64	221f9053	0,31,1	fsgnjn.d f0, f31, f1
+fsgnjn.d	64	22809fd3	31,1,8	fsgnjn.d f31, f1, f8
+fsgnjn.d	64	22f410d3	1,8,15	fsgnjn.d f1, f8, f15
+fsgnjn.d	64	23079453	8,15,16	fsgnjn.d f8, f15, f16
+fsgnjn.d	64	237817d3	15,16,23	fsgnjn.d f15, f16, f23
+fsgnjn.d	64	227b9853	16,23,7	fsgnjn.d f16, f23, f7
+fsgnjn.d	64	22039bd3	23,7,0	fsgnjn.d f23, f7, f0
+fsgnjn.d	64	23f013d3	7,0,31	fsgnjn.d f7, f0, f31
+fsgnjx.d	64	221fa053	0,31,1	fsgnjx.d f0, f31, f1
+fsgnjx.d	64	2280afd3	31,1,8	fsgnjx.d f31, f1, f8
+fsgnjx.d	64	22f420d3	1,8,15	fsgnjx.d f1, f8, f15
+fsgnjx.d	64	2307a453	8,15,16	fsgnjx.d f8, f15, f16
+fsgnjx.d	64	237827d3	15,16,23	fsgnjx.d f15, f16, f23
+fsgnjx.d	64	227ba853	16,23,7	fsgnjx.d f16, f23, f7
+fsgnjx.d	64	2203abd3	23,7,0	fsgnjx.d f23, f7, f0
+fsgnjx.d	64	23f023d3	7,0,31	fsgnjx.d f7, f0, f31
+fmin.d	64	2a1f8053	0,31,1	fmin.d f0, f31, f1
+fmin.d	64	2a808fd3	31,1,8	fmin.d f31, f1, f8
+fmin.d	64	2af400d3	1,8,15	fmin.d f1, f8, f15
+fmin.d	64	2b078453	8,15,16	fmin.d f8, f15, f16
+fmin.d	64	2b7807d3	15,16,23	fmin.d f15, f16, f23
+fmin.d	64	2a7b8853	16,23,7	fmin.d f16, f23, f7
+fmin.d	64	2a038bd3	23,7,0	fmin.d f23, f7, f0
+fmin.d	64	2bf003d3	7,0,31	fmin.d f7, f0, f31
+fmax.d	64	2a1f9053	0,31,1	fmax.d f0, f31, f1
+fmax.d	64	2a809fd3	31,1,8	fmax.d f31, f1, f8
+fmax.d	64	2af410d3	1,8,15	fmax.d f1, f8, f15
+fmax.d	64	2b079453	8,15,16	fmax.d f8, f15, f16
+fmax.d	64	2b7817d3	15,16,23	fmax.d f15, f16, f23
+fmax.d	64	2a7b9853	16,23,7	fmax.d f16, f23, f7
+fmax.d	64	2a039bd3	23,7,0	fmax.d f23, f7, f0
+fmax.d	64	2bf013d3	7,0,31	fmax.d f7, f0, f31
+fcvt.s.d	64	401f8053	0,31,0	fcvt.s.d f0, f31, rne
+fcvt.s.d	64	40109fd3	31,1,1	fcvt.s.d f31, f1, rtz
+fcvt.s.d	64	401420d3	1,8,2	fcvt.s.d f1, f8, rdn
+fcvt.s.d	64	4017b453	8,15,3	fcvt.s.d f8, f15, rup
+fcvt.s.d	64	401847d3	15,16,4	fcvt.s.d f15, f16, rmm
+fcvt.s.d	64	401bf853	16,23,7	fcvt.s.d f16, f23, dyn
+fcvt.s.d	64	40138bd3	23,7,0	fcvt.s.d f23, f7, rne
+fcvt.s.d	64	401073d3	7,0,7	fcvt.s.d f7, f0, dyn
+fcvt.d.s	64	420f8053	0,31,0	fcvt.d.s f0, f31
+fcvt.d.s	64	42008fd3	31,1,0	fcvt.d.s f31, f1
+fcvt.d.s	64	420400d3	1,8,0	fcvt.d.s f1, f8
+fcvt.d.s	64	42078453	8,15,0	fcvt.d.s f8, f15
+fcvt.d.s	64	420807d3	15,16,0	fcvt.d.s f15, f16
+fcvt.d.s	64	420b8853	16,23,0	fcvt.d.s f16, f23
+fcvt.d.s	64	42038bd3	23,7,0	fcvt.d.s f23, f7
+fcvt.d.s	64	420003d3	7,0,0	fcvt.d.s f7, f0
+feq.d	64	a21fa053	0,31,1	feq.d x0, f31, f1
+feq.d	64	a280afd3	31,1,8	feq.d x31, f1, f8
+feq.d	64	a2f420d3	1,8,15	feq.d x1, f8, f15
+feq.d	64	a307a453	8,15,16	feq.d x8, f15, f16
+feq.d	64	a37827d3	15,16,23	feq.d x15, f16, f23
+feq.d	64	a27ba853	16,23,7	feq.d x16, f23, f7
+feq.d	64	a203abd3	23,7,0	feq.d x23, f7, f0
+feq.d	64	a3f023d3	7,0,31	feq.d x7, f0, f31
+flt.d	64	a21f9053	0,31,1	flt.d x0, f31, f1
+flt.d	64	a2809fd3	31,1,8	flt.d x31, f1, f8
+flt.d	64	a2f410d3	1,8,15	flt.d x1, f8, f15
+flt.d	64	a3079453	8,15,16	flt.d x8, f15, f16
+flt.d	64	a37817d3	15,16,23	flt.d x15, f16, f23
+flt.d	64	a27b9853	16,23,7	flt.d x16, f23, f7
+flt.d	64	a2039bd3	23,7,0	flt.d x23, f7, f0
+flt.d	64	a3f013d3	7,0,31	flt.d x7, f0, f31
+fle.d	64	a21f8053	0,31,1	fle.d x0, f31, f1
+fle.d	64	a2808fd3	31,1,8	fle.d x31, f1, f8
+fle.d	64	a2f400d3	1,8,15	fle.d x1, f8, f15
+fle.d	64	a3078453	8,15,16	fle.d x8, f15, f16
+fle.d	64	a37807d3	15,16,23	fle.d x15, f16, f23
+fle.d	64	a27b8853	16,23,7	fle.d x16, f23, f7
+fle.d	64	a2038bd3	23,7,0	fle.d x23, f7, f0
+fle.d	64	a3f003d3	7,0,31	fle.d x7, f0, f31
+fclass.d	64	e20f9053	0,31	fclass.d x0, f31
+fclass.d	64	e2009fd3	31,1	fclass.d x31, f1
+fclass.d	64	e20410d3	1,8	fclass.d x1, f8
+fclass.d	64	e2079453	8,15	fclass.d x8, f15
+fclass.d	64	e20817d3	15,16	fclass.d x15, f16
+fclass.d	64	e20b9853	16,23	fclass.d x16, f23
+fclass.d	64	e2039bd3	23,7	fclass.d x23, f7
+fclass.d	64	e20013d3	7,0	fclass.d x7, f0
+fcvt.w.d	64	c20f8053	0,31,0	fcvt.w.d x0, f31, rne
+fcvt.w.d	64	c2009fd3	31,1,1	fcvt.w.d x31, f1, rtz
+fcvt.w.d	64	c20420d3	1,8,2	fcvt.w.d x1, f8, rdn
+fcvt.w.d	64	c207b453	8,15,3	fcvt.w.d x8, f15, rup
+fcvt.w.d	64	c20847d3	15,16,4	fcvt.w.d x15, f16, rmm
+fcvt.w.d	64	c20bf853	16,23,7	fcvt.w.d x16, f23, dyn
+fcvt.w.d	64	c2038bd3	23,7,0	fcvt.w.d x23, f7, rne
+fcvt.w.d	64	c20073d3	7,0,7	fcvt.w.d x7, f0, dyn
+fcvt.wu.d	64	c21f8053	0,31,0	fcvt.wu.d x0, f31, rne
+fcvt.wu.d	64	c2109fd3	31,1,1	fcvt.wu.d x31, f1, rtz
+fcvt.wu.d	64	c21420d3	1,8,2	fcvt.wu.d x1, f8, rdn
+fcvt.wu.d	64	c217b453	8,15,3	fcvt.wu.d x8, f15, rup
+fcvt.wu.d	64	c21847d3	15,16,4	fcvt.wu.d x15, f16, rmm
+fcvt.wu.d	64	c21bf853	16,23,7	fcvt.wu.d x16, f23, dyn
+fcvt.wu.d	64	c2138bd3	23,7,0	fcvt.wu.d x23, f7, rne
+fcvt.wu.d	64	c21073d3	7,0,7	fcvt.wu.d x7, f0, dyn
+fcvt.d.w	64	d20f8053	0,31,0	fcvt.d.w f0, x31
+fcvt.d.w	64	d2008fd3	31,1,0	fcvt.d.w f31, x1
+fcvt.d.w	64	d20400d3	1,8,0	fcvt.d.w f1, x8
+fcvt.d.w	64	d2078453	8,15,0	fcvt.d.w f8, x15
+fcvt.d.w	64	d20807d3	15,16,0	fcvt.d.w f15, x16
+fcvt.d.w	64	d20b8853	16,23,0	fcvt.d.w f16, x23
+fcvt.d.w	64	d2038bd3	23,7,0	fcvt.d.w f23, x7
+fcvt.d.w	64	d20003d3	7,0,0	fcvt.d.w f7, x0
+fcvt.d.wu	64	d21f8053	0,31,0	fcvt.d.wu f0, x31
+fcvt.d.wu	64	d2108fd3	31,1,0	fcvt.d.wu f31, x1
+fcvt.d.wu	64	d21400d3	1,8,0	fcvt.d.wu f1, x8
+fcvt.d.wu	64	d2178453	8,15,0	fcvt.d.wu f8, x15
+fcvt.d.wu	64	d21807d3	15,16,0	fcvt.d.wu f15, x16
+fcvt.d.wu	64	d21b8853	16,23,0	fcvt.d.wu f16, x23
+fcvt.d.wu	64	d2138bd3	23,7,0	fcvt.d.wu f23, x7
+fcvt.d.wu	64	d21003d3	7,0,0	fcvt.d.wu f7, x0
+fcvt.l.d	64	c22f8053	0,31,0	fcvt.l.d x0, f31, rne
+fcvt.l.d	64	c2209fd3	31,1,1	fcvt.l.d x31, f1, rtz
+fcvt.l.d	64	c22420d3	1,8,2	fcvt.l.d x1, f8, rdn
+fcvt.l.d	64	c227b453	8,15,3	fcvt.l.d x8, f15, rup
+fcvt.l.d	64	c22847d3	15,16,4	fcvt.l.d x15, f16, rmm
+fcvt.l.d	64	c22bf853	16,23,7	fcvt.l.d x16, f23, dyn
+fcvt.l.d	64	c2238bd3	23,7,0	fcvt.l.d x23, f7, rne
+fcvt.l.d	64	c22073d3	7,0,7	fcvt.l.d x7, f0, dyn
+fcvt.lu.d	64	c23f8053	0,31,0	fcvt.lu.d x0, f31, rne
+fcvt.lu.d	64	c2309fd3	31,1,1	fcvt.lu.d x31, f1, rtz
+fcvt.lu.d	64	c23420d3	1,8,2	fcvt.lu.d x1, f8, rdn
+fcvt.lu.d	64	c237b453	8,15,3	fcvt.lu.d x8, f15, rup
+fcvt.lu.d	64	c23847d3	15,16,4	fcvt.lu.d x15, f16, rmm
+fcvt.lu.d	64	c23bf853	16,23,7	fcvt.lu.d x16, f23, dyn
+fcvt.lu.d	64	c2338bd3	23,7,0	fcvt.lu.d x23, f7, rne
+fcvt.lu.d	64	c23073d3	7,0,7	fcvt.lu.d x7, f0, dyn
+fmv.x.d	64	e20f8053	0,31	fmv.x.d x0, f31
+fmv.x.d	64	e2008fd3	31,1	fmv.x.d x31, f1
+fmv.x.d	64	e20400d3	1,8	fmv.x.d x1, f8
+fmv.x.d	64	e2078453	8,15	fmv.x.d x8, f15
+fmv.x.d	64	e20807d3	15,16	fmv.x.d x15, f16
+fmv.x.d	64	e20b8853	16,23	fmv.x.d x16, f23
+fmv.x.d	64	e2038bd3	23,7	fmv.x.d x23, f7
+fmv.x.d	64	e20003d3	7,0	fmv.x.d x7, f0
+fcvt.d.l	64	d22f8053	0,31,0	fcvt.d.l f0, x31, rne
+fcvt.d.l	64	d2209fd3	31,1,1	fcvt.d.l f31, x1, rtz
+fcvt.d.l	64	d22420d3	1,8,2	fcvt.d.l f1, x8, rdn
+fcvt.d.l	64	d227b453	8,15,3	fcvt.d.l f8, x15, rup
+fcvt.d.l	64	d22847d3	15,16,4	fcvt.d.l f15, x16, rmm
+fcvt.d.l	64	d22bf853	16,23,7	fcvt.d.l f16, x23, dyn
+fcvt.d.l	64	d2238bd3	23,7,0	fcvt.d.l f23, x7, rne
+fcvt.d.l	64	d22073d3	7,0,7	fcvt.d.l f7, x0, dyn
+fcvt.d.lu	64	d23f8053	0,31,0	fcvt.d.lu f0, x31, rne
+fcvt.d.lu	64	d2309fd3	31,1,1	fcvt.d.lu f31, x1, rtz
+fcvt.d.lu	64	d23420d3	1,8,2	fcvt.d.lu f1, x8, rdn
+fcvt.d.lu	64	d237b453	8,15,3	fcvt.d.lu f8, x15, rup
+fcvt.d.lu	64	d23847d3	15,16,4	fcvt.d.lu f15, x16, rmm
+fcvt.d.lu	64	d23bf853	16,23,7	fcvt.d.lu f16, x23, dyn
+fcvt.d.lu	64	d2338bd3	23,7,0	fcvt.d.lu f23, x7, rne
+fcvt.d.lu	64	d23073d3	7,0,7	fcvt.d.lu f7, x0, dyn
+fmv.d.x	64	f20f8053	0,31	fmv.d.x f0, x31
+fmv.d.x	64	f2008fd3	31,1	fmv.d.x f31, x1
+fmv.d.x	64	f20400d3	1,8	fmv.d.x f1, x8
+fmv.d.x	64	f2078453	8,15	fmv.d.x f8, x15
+fmv.d.x	64	f20807d3	15,16	fmv.d.x f15, x16
+fmv.d.x	64	f20b8853	16,23	fmv.d.x f16, x23
+fmv.d.x	64	f2038bd3	23,7	fmv.d.x f23, x7
+fmv.d.x	64	f20003d3	7,0	fmv.d.x f7, x0
+c.mv	64	80a2	1,8	c.mv x1, x8
+c.mv	64	8fa6	31,9	c.mv x31, x9
+c.mv	64	842a	8,10	c.mv x8, x10
+c.mv	64	848e	9,3	c.mv x9, x3
+c.mv	64	853e	10,15	c.mv x10, x15
+c.mv	64	819e	3,7	c.mv x3, x7
+c.mv	64	8786	15,1	c.mv x15, x1
+c.mv	64	83fe	7,31	c.mv x7, x31
+c.add	64	90a2	1,8	c.add x1, x8
+c.add	64	9fa6	31,9	c.add x31, x9
+c.add	64	942a	8,10	c.add x8, x10
+c.add	64	948e	9,3	c.add x9, x3
+c.add	64	953e	10,15	c.add x10, x15
+c.add	64	919e	3,7	c.add x3, x7
+c.add	64	9786	15,1	c.add x15, x1
+c.add	64	93fe	7,31	c.add x7, x31
+c.and	64	8c69	8,10	c.and x8, x10
+c.and	64	8ced	9,11	c.and x9, x11
+c.and	64	8d71	10,12	c.and x10, x12
+c.and	64	8df5	11,13	c.and x11, x13
+c.and	64	8e79	12,14	c.and x12, x14
+c.and	64	8efd	13,15	c.and x13, x15
+c.and	64	8f61	14,8	c.and x14, x8
+c.and	64	8fe5	15,9	c.and x15, x9
+c.or	64	8c49	8,10	c.or x8, x10
+c.or	64	8ccd	9,11	c.or x9, x11
+c.or	64	8d51	10,12	c.or x10, x12
+c.or	64	8dd5	11,13	c.or x11, x13
+c.or	64	8e59	12,14	c.or x12, x14
+c.or	64	8edd	13,15	c.or x13, x15
+c.or	64	8f41	14,8	c.or x14, x8
+c.or	64	8fc5	15,9	c.or x15, x9
+c.xor	64	8c29	8,10	c.xor x8, x10
+c.xor	64	8cad	9,11	c.xor x9, x11
+c.xor	64	8d31	10,12	c.xor x10, x12
+c.xor	64	8db5	11,13	c.xor x11, x13
+c.xor	64	8e39	12,14	c.xor x12, x14
+c.xor	64	8ebd	13,15	c.xor x13, x15
+c.xor	64	8f21	14,8	c.xor x14, x8
+c.xor	64	8fa5	15,9	c.xor x15, x9
+c.sub	64	8c09	8,10	c.sub x8, x10
+c.sub	64	8c8d	9,11	c.sub x9, x11
+c.sub	64	8d11	10,12	c.sub x10, x12
+c.sub	64	8d95	11,13	c.sub x11, x13
+c.sub	64	8e19	12,14	c.sub x12, x14
+c.sub	64	8e9d	13,15	c.sub x13, x15
+c.sub	64	8f01	14,8	c.sub x14, x8
+c.sub	64	8f85	15,9	c.sub x15, x9
+c.lui	64	7081	1,-32	c.lui x1, 1048544
+c.lui	64	7ffd	31,-1	c.lui x31, 1048575
+c.lui	64	6405	8,1	c.lui x8, 1
+c.lui	64	6489	9,2	c.lui x9, 2
+c.lui	64	653d	10,15	c.lui x10, 15
+c.lui	64	61fd	3,31	c.lui x3, 31
+c.lui	64	77c1	15,-16	c.lui x15, 1048560
+c.lui	64	639d	7,7	c.lui x7, 7
+c.addi16sp	64	7101	-512	c.addi16sp sp, -512
+c.addi16sp	64	717d	-16	c.addi16sp sp, -16
+c.addi16sp	64	6141	16	c.addi16sp sp, 16
+c.addi16sp	64	6105	32	c.addi16sp sp, 32
+c.addi16sp	64	6121	64	c.addi16sp sp, 64
+c.addi16sp	64	617d	496	c.addi16sp sp, 496
+c.addi16sp	64	7111	-256	c.addi16sp sp, -256
+c.addi16sp	64	6111	256	c.addi16sp sp, 256
+c.addi4spn	64	0040	8,4	c.addi4spn x8, sp, 4
+c.addi4spn	64	0024	9,8	c.addi4spn x9, sp, 8
+c.addi4spn	64	0808	10,16	c.addi4spn x10, sp, 16
+c.addi4spn	64	100c	11,32	c.addi4spn x11, sp, 32
+c.addi4spn	64	0090	12,64	c.addi4spn x12, sp, 64
+c.addi4spn	64	0114	13,128	c.addi4spn x13, sp, 128
+c.addi4spn	64	0418	14,512	c.addi4spn x14, sp, 512
+c.addi4spn	64	1ffc	15,1020	c.addi4spn x15, sp, 1020
+c.addi	64	1081	1,-32	c.addi x1, -32
+c.addi	64	1ffd	31,-1	c.addi x31, -1
+c.addi	64	0401	8,0	c.addi x8, 0
+c.addi	64	0485	9,1	c.addi x9, 1
+c.addi	64	053d	10,15	c.addi x10, 15
+c.addi	64	01fd	3,31	c.addi x3, 31
+c.addi	64	17c1	15,-16	c.addi x15, -16
+c.addi	64	039d	7,7	c.addi x7, 7
+c.li	64	5081	1,-32	c.li x1, -32
+c.li	64	5ffd	31,-1	c.li x31, -1
+c.li	64	4401	8,0	c.li x8, 0
+c.li	64	4485	9,1	c.li x9, 1
+c.li	64	453d	10,15	c.li x10, 15
+c.li	64	41fd	3,31	c.li x3, 31
+c.li	64	57c1	15,-16	c.li x15, -16
+c.li	64	439d	7,7	c.li x7, 7
+c.slli	64	0086	1,1	c.slli x1, 1
+c.slli	64	0f86	31,1	c.slli x31, 1
+c.slli	64	040a	8,2	c.slli x8, 2
+c.slli	64	04fe	9,31	c.slli x9, 31
+c.slli	64	1502	10,32	c.slli x10, 32
+c.slli	64	11fa	3,62	c.slli x3, 62
+c.slli	64	17fe	15,63	c.slli x15, 63
+c.slli	64	03c2	7,16	c.slli x7, 16
+c.andi	64	9881	9,-32	c.andi x9, -32
+c.andi	64	997d	10,-1	c.andi x10, -1
+c.andi	64	8981	11,0	c.andi x11, 0
+c.andi	64	8a05	12,1	c.andi x12, 1
+c.andi	64	8abd	13,15	c.andi x13, 15
+c.andi	64	8b7d	14,31	c.andi x14, 31
+c.andi	64	9bc1	15,-16	c.andi x15, -16
+c.andi	64	881d	8,7	c.andi x8, 7
+c.srli	64	8085	9,1	c.srli x9, 1
+c.srli	64	8105	10,1	c.srli x10, 1
+c.srli	64	8189	11,2	c.srli x11, 2
+c.srli	64	827d	12,31	c.srli x12, 31
+c.srli	64	9281	13,32	c.srli x13, 32
+c.srli	64	9379	14,62	c.srli x14, 62
+c.srli	64	93fd	15,63	c.srli x15, 63
+c.srli	64	8041	8,16	c.srli x8, 16
+c.srai	64	8485	9,1	c.srai x9, 1
+c.srai	64	8505	10,1	c.srai x10, 1
+c.srai	64	8589	11,2	c.srai x11, 2
+c.srai	64	867d	12,31	c.srai x12, 31
+c.srai	64	9681	13,32	c.srai x13, 32
+c.srai	64	9779	14,62	c.srai x14, 62
+c.srai	64	97fd	15,63	c.srai x15, 63
+c.srai	64	8441	8,16	c.srai x8, 16
+c.beqz	64	d081	9,-256	c.beqz x9, .-256
+c.beqz	64	dd7d	10,-2	c.beqz x10, .-2
+c.beqz	64	c181	11,0	c.beqz x11, .+0
+c.beqz	64	c209	12,2	c.beqz x12, .+2
+c.beqz	64	c291	13,4	c.beqz x13, .+4
+c.beqz	64	c341	14,128	c.beqz x14, .+128
+c.beqz	64	cffd	15,254	c.beqz x15, .+254
+c.beqz	64	d041	8,-128	c.beqz x8, .-128
+c.bnez	64	f081	9,-256	c.bnez x9, .-256
+c.bnez	64	fd7d	10,-2	c.bnez x10, .-2
+c.bnez	64	e181	11,0	c.bnez x11, .+0
+c.bnez	64	e209	12,2	c.bnez x12, .+2
+c.bnez	64	e291	13,4	c.bnez x13, .+4
+c.bnez	64	e341	14,128	c.bnez x14, .+128
+c.bnez	64	effd	15,254	c.bnez x15, .+254
+c.bnez	64	f041	8,-128	c.bnez x8, .-128
+c.j	64	b001	-2048	c.j .-2048
+c.j	64	bffd	-2	c.j .-2
+c.j	64	a001	0	c.j .+0
+c.j	64	a009	2	c.j .+2
+c.j	64	a011	4	c.j .+4
+c.j	64	a101	1024	c.j .+1024
+c.j	64	affd	2046	c.j .+2046
+c.j	64	b101	-1024	c.j .-1024
+c.jr	64	8f82	31	c.jr x31
+c.jr	64	8402	8	c.jr x8
+c.jr	64	8482	9	c.jr x9
+c.jr	64	8502	10	c.jr x10
+c.jr	64	8182	3	c.jr x3
+c.jr	64	8782	15	c.jr x15
+c.jr	64	8382	7	c.jr x7
+c.jr	64	8082	1	c.jr x1
+c.jalr	64	9f82	31	c.jalr x31
+c.jalr	64	9402	8	c.jalr x8
+c.jalr	64	9482	9	c.jalr x9
+c.jalr	64	9502	10	c.jalr x10
+c.jalr	64	9182	3	c.jalr x3
+c.jalr	64	9782	15	c.jalr x15
+c.jalr	64	9382	7	c.jalr x7
+c.jalr	64	9082	1	c.jalr x1
+c.ebreak	64	9002		c.ebreak
+c.ebreak	64	9002		c.ebreak
+c.ebreak	64	9002		c.ebreak
+c.ebreak	64	9002		c.ebreak
+c.ebreak	64	9002		c.ebreak
+c.ebreak	64	9002		c.ebreak
+c.ebreak	64	9002		c.ebreak
+c.ebreak	64	9002		c.ebreak
+c.lwsp	64	4082	1,0	c.lwsp x1, 0(sp)
+c.lwsp	64	4f92	31,4	c.lwsp x31, 4(sp)
+c.lwsp	64	4422	8,8	c.lwsp x8, 8(sp)
+c.lwsp	64	44c2	9,16	c.lwsp x9, 16(sp)
+c.lwsp	64	5502	10,32	c.lwsp x10, 32(sp)
+c.lwsp	64	4186	3,64	c.lwsp x3, 64(sp)
+c.lwsp	64	478a	15,128	c.lwsp x15, 128(sp)
+c.lwsp	64	53fe	7,252	c.lwsp x7, 252(sp)
+c.lw	64	4080	8,9,0	c.lw x8, 0(x9)
+c.lw	64	4144	9,10,4	c.lw x9, 4(x10)
+c.lw	64	4588	10,11,8	c.lw x10, 8(x11)
+c.lw	64	4a0c	11,12,16	c.lw x11, 16(x12)
+c.lw	64	5290	12,13,32	c.lw x12, 32(x13)
+c.lw	64	4334	13,14,64	c.lw x13, 64(x14)
+c.lw	64	5fb8	14,15,120	c.lw x14, 120(x15)
+c.lw	64	5c7c	15,8,124	c.lw x15, 124(x8)
+c.swsp	64	c022	8,0	c.swsp x8, 0(sp)
+c.swsp	64	c226	9,4	c.swsp x9, 4(sp)
+c.swsp	64	c42a	10,8	c.swsp x10, 8(sp)
+c.swsp	64	c80e	3,16	c.swsp x3, 16(sp)
+c.swsp	64	d03e	15,32	c.swsp x15, 32(sp)
+c.swsp	64	c09e	7,64	c.swsp x7, 64(sp)
+c.swsp	64	c106	1,128	c.swsp x1, 128(sp)
+c.swsp	64	dffe	31,252	c.swsp x31, 252(sp)
+c.sw	64	c088	9,10,0	c.sw x10, 0(x9)
+c.sw	64	c14c	10,11,4	c.sw x11, 4(x10)
+c.sw	64	c590	11,12,8	c.sw x12, 8(x11)
+c.sw	64	ca14	12,13,16	c.sw x13, 16(x12)
+c.sw	64	d298	13,14,32	c.sw x14, 32(x13)
+c.sw	64	c33c	14,15,64	c.sw x15, 64(x14)
+c.sw	64	dfa0	15,8,120	c.sw x8, 120(x15)
+c.sw	64	dc64	8,9,124	c.sw x9, 124(x8)
+c.addw	64	9c29	8,10	c.addw x8, x10
+c.addw	64	9cad	9,11	c.addw x9, x11
+c.addw	64	9d31	10,12	c.addw x10, x12
+c.addw	64	9db5	11,13	c.addw x11, x13
+c.addw	64	9e39	12,14	c.addw x12, x14
+c.addw	64	9ebd	13,15	c.addw x13, x15
+c.addw	64	9f21	14,8	c.addw x14, x8
+c.addw	64	9fa5	15,9	c.addw x15, x9
+c.subw	64	9c09	8,10	c.subw x8, x10
+c.subw	64	9c8d	9,11	c.subw x9, x11
+c.subw	64	9d11	10,12	c.subw x10, x12
+c.subw	64	9d95	11,13	c.subw x11, x13
+c.subw	64	9e19	12,14	c.subw x12, x14
+c.subw	64	9e9d	13,15	c.subw x13, x15
+c.subw	64	9f01	14,8	c.subw x14, x8
+c.subw	64	9f85	15,9	c.subw x15, x9
+c.addiw	64	3081	1,-32	c.addiw x1, -32
+c.addiw	64	3ffd	31,-1	c.addiw x31, -1
+c.addiw	64	2401	8,0	c.addiw x8, 0
+c.addiw	64	2485	9,1	c.addiw x9, 1
+c.addiw	64	253d	10,15	c.addiw x10, 15
+c.addiw	64	21fd	3,31	c.addiw x3, 31
+c.addiw	64	37c1	15,-16	c.addiw x15, -16
+c.addiw	64	239d	7,7	c.addiw x7, 7
+c.ldsp	64	6082	1,0	c.ldsp x1, 0(sp)
+c.ldsp	64	6fa2	31,8	c.ldsp x31, 8(sp)
+c.ldsp	64	6442	8,16	c.ldsp x8, 16(sp)
+c.ldsp	64	7482	9,32	c.ldsp x9, 32(sp)
+c.ldsp	64	6506	10,64	c.ldsp x10, 64(sp)
+c.ldsp	64	618a	3,128	c.ldsp x3, 128(sp)
+c.ldsp	64	6792	15,256	c.ldsp x15, 256(sp)
+c.ldsp	64	73fe	7,504	c.ldsp x7, 504(sp)
+c.ld	64	6080	8,9,0	c.ld x8, 0(x9)
+c.ld	64	6504	9,10,8	c.ld x9, 8(x10)
+c.ld	64	6988	10,11,16	c.ld x10, 16(x11)
+c.ld	64	720c	11,12,32	c.ld x11, 32(x12)
+c.ld	64	62b0	12,13,64	c.ld x12, 64(x13)
+c.ld	64	6354	13,14,128	c.ld x13, 128(x14)
+c.ld	64	7bf8	14,15,240	c.ld x14, 240(x15)
+c.ld	64	7c7c	15,8,248	c.ld x15, 248(x8)
+c.sdsp	64	e022	8,0	c.sdsp x8, 0(sp)
+c.sdsp	64	e426	9,8	c.sdsp x9, 8(sp)
+c.sdsp	64	e82a	10,16	c.sdsp x10, 16(sp)
+c.sdsp	64	f00e	3,32	c.sdsp x3, 32(sp)
+c.sdsp	64	e0be	15,64	c.sdsp x15, 64(sp)
+c.sdsp	64	e11e	7,128	c.sdsp x7, 128(sp)
+c.sdsp	64	e206	1,256	c.sdsp x1, 256(sp)
+c.sdsp	64	fffe	31,504	c.sdsp x31, 504(sp)
+c.sd	64	e088	9,10,0	c.sd x10, 0(x9)
+c.sd	64	e50c	10,11,8	c.sd x11, 8(x10)
+c.sd	64	e990	11,12,16	c.sd x12, 16(x11)
+c.sd	64	f214	12,13,32	c.sd x13, 32(x12)
+c.sd	64	e2b8	13,14,64	c.sd x14, 64(x13)
+c.sd	64	e35c	14,15,128	c.sd x15, 128(x14)
+c.sd	64	fbe0	15,8,240	c.sd x8, 240(x15)
+c.sd	64	fc64	8,9,248	c.sd x9, 248(x8)
+csrrw	64	000f9073	0,31,0	csrrw x0, 0, x31
+csrrw	64	00109ff3	31,1,1	csrrw x31, 1, x1
+csrrw	64	300410f3	1,8,768	csrrw x1, 768, x8
+csrrw	64	c0079473	8,15,3072	csrrw x8, 3072, x15
+csrrw	64	7a0817f3	15,16,1952	csrrw x15, 1952, x16
+csrrw	64	fffb9873	16,23,4095	csrrw x16, 4095, x23
+csrrw	64	10039bf3	23,7,256	csrrw x23, 256, x7
+csrrw	64	342013f3	7,0,834	csrrw x7, 834, x0
+csrrs	64	000fa073	0,31,0	csrrs x0, 0, x31
+csrrs	64	0010aff3	31,1,1	csrrs x31, 1, x1
+csrrs	64	300420f3	1,8,768	csrrs x1, 768, x8
+csrrs	64	c007a473	8,15,3072	csrrs x8, 3072, x15
+csrrs	64	7a0827f3	15,16,1952	csrrs x15, 1952, x16
+csrrs	64	fffba873	16,23,4095	csrrs x16, 4095, x23
+csrrs	64	1003abf3	23,7,256	csrrs x23, 256, x7
+csrrs	64	342023f3	7,0,834	csrrs x7, 834, x0
+csrrc	64	000fb073	0,31,0	csrrc x0, 0, x31
+csrrc	64	0010bff3	31,1,1	csrrc x31, 1, x1
+csrrc	64	300430f3	1,8,768	csrrc x1, 768, x8
+csrrc	64	c007b473	8,15,3072	csrrc x8, 3072, x15
+csrrc	64	7a0837f3	15,16,1952	csrrc x15, 1952, x16
+csrrc	64	fffbb873	16,23,4095	csrrc x16, 4095, x23
+csrrc	64	1003bbf3	23,7,256	csrrc x23, 256, x7
+csrrc	64	342033f3	7,0,834	csrrc x7, 834, x0
+csrrwi	64	00005073	0,0,0	csrrwi x0, 0, 0
+csrrwi	64	0010dff3	31,1,1	csrrwi x31, 1, 1
+csrrwi	64	300150f3	1,2,768	csrrwi x1, 768, 2
+csrrwi	64	c003d473	8,7,3072	csrrwi x8, 3072, 7
+csrrwi	64	7a07d7f3	15,15,1952	csrrwi x15, 1952, 15
+csrrwi	64	fff85873	16,16,4095	csrrwi x16, 4095, 16
+csrrwi	64	100f5bf3	23,30,256	csrrwi x23, 256, 30
+csrrwi	64	342fd3f3	7,31,834	csrrwi x7, 834, 31
+csrrsi	64	00006073	0,0,0	csrrsi x0, 0, 0
+csrrsi	64	0010eff3	31,1,1	csrrsi x31, 1, 1
+csrrsi	64	300160f3	1,2,768	csrrsi x1, 768, 2
+csrrsi	64	c003e473	8,7,3072	csrrsi x8, 3072, 7
+csrrsi	64	7a07e7f3	15,15,1952	csrrsi x15, 1952, 15
+csrrsi	64	fff86873	16,16,4095	csrrsi x16, 4095, 16
+csrrsi	64	100f6bf3	23,30,256	csrrsi x23, 256, 30
+csrrsi	64	342fe3f3	7,31,834	csrrsi x7, 834, 31
+csrrci	64	00007073	0,0,0	csrrci x0, 0, 0
+csrrci	64	0010fff3	31,1,1	csrrci x31, 1, 1
+csrrci	64	300170f3	1,2,768	csrrci x1, 768, 2
+csrrci	64	c003f473	8,7,3072	csrrci x8, 3072, 7
+csrrci	64	7a07f7f3	15,15,1952	csrrci x15, 1952, 15
+csrrci	64	fff87873	16,16,4095	csrrci x16, 4095, 16
+csrrci	64	100f7bf3	23,30,256	csrrci x23, 256, 30
+csrrci	64	342ff3f3	7,31,834	csrrci x7, 834, 31
+fence.i	64	0000100f		fence.i
+fence.i	64	0000100f		fence.i
+fence.i	64	0000100f		fence.i
+fence.i	64	0000100f		fence.i
+fence.i	64	0000100f		fence.i
+fence.i	64	0000100f		fence.i
+fence.i	64	0000100f		fence.i
+fence.i	64	0000100f		fence.i
+sret	64	10200073		sret
+sret	64	10200073		sret
+sret	64	10200073		sret
+sret	64	10200073		sret
+sret	64	10200073		sret
+sret	64	10200073		sret
+sret	64	10200073		sret
+sret	64	10200073		sret
+mret	64	30200073		mret
+mret	64	30200073		mret
+mret	64	30200073		mret
+mret	64	30200073		mret
+mret	64	30200073		mret
+mret	64	30200073		mret
+mret	64	30200073		mret
+mret	64	30200073		mret
+wfi	64	10500073		wfi
+wfi	64	10500073		wfi
+wfi	64	10500073		wfi
+wfi	64	10500073		wfi
+wfi	64	10500073		wfi
+wfi	64	10500073		wfi
+wfi	64	10500073		wfi
+wfi	64	10500073		wfi
+sfence.vma	64	121f8073	31,1	sfence.vma x31, x1
+sfence.vma	64	12808073	1,8	sfence.vma x1, x8
+sfence.vma	64	12f40073	8,15	sfence.vma x8, x15
+sfence.vma	64	13078073	15,16	sfence.vma x15, x16
+sfence.vma	64	13780073	16,23	sfence.vma x16, x23
+sfence.vma	64	127b8073	23,7	sfence.vma x23, x7
+sfence.vma	64	12038073	7,0	sfence.vma x7, x0
+sfence.vma	64	13f00073	0,31	sfence.vma x0, x31
+sinval.vma	64	161f8073	31,1	sinval.vma x31, x1
+sinval.vma	64	16808073	1,8	sinval.vma x1, x8
+sinval.vma	64	16f40073	8,15	sinval.vma x8, x15
+sinval.vma	64	17078073	15,16	sinval.vma x15, x16
+sinval.vma	64	17780073	16,23	sinval.vma x16, x23
+sinval.vma	64	167b8073	23,7	sinval.vma x23, x7
+sinval.vma	64	16038073	7,0	sinval.vma x7, x0
+sinval.vma	64	17f00073	0,31	sinval.vma x0, x31
+sfence.w.inval	64	18000073		sfence.w.inval
+sfence.w.inval	64	18000073		sfence.w.inval
+sfence.w.inval	64	18000073		sfence.w.inval
+sfence.w.inval	64	18000073		sfence.w.inval
+sfence.w.inval	64	18000073		sfence.w.inval
+sfence.w.inval	64	18000073		sfence.w.inval
+sfence.w.inval	64	18000073		sfence.w.inval
+sfence.w.inval	64	18000073		sfence.w.inval
+sfence.inval.ir	64	18100073		sfence.inval.ir
+sfence.inval.ir	64	18100073		sfence.inval.ir
+sfence.inval.ir	64	18100073		sfence.inval.ir
+sfence.inval.ir	64	18100073		sfence.inval.ir
+sfence.inval.ir	64	18100073		sfence.inval.ir
+sfence.inval.ir	64	18100073		sfence.inval.ir
+sfence.inval.ir	64	18100073		sfence.inval.ir
+sfence.inval.ir	64	18100073		sfence.inval.ir

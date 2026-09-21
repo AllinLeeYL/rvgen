@@ -1,0 +1,36 @@
+[tasks.build]
+description = "Build the release-version rvgen"
+dir = "."
+run = "cargo build --release && cp target/release/rvgen ./rvgen"
+sources = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/**/*.rs",
+]
+outputs = ["./rvgen"]
+
+[tasks.run]
+depends = ["build"]
+description = "Run the rvgen after building the latest updates."
+run = [
+    "./rvgen"
+]
+
+[tasks.disassemble]
+run = [
+    "riscv64-unknown-elf-objdump --disassemble",
+]
+
+[tasks.analyze]
+run = [
+    "python3 scripts/analyze_elf.py",
+]
+
+[tasks.clean]
+description = "Clean the build files"
+run = [
+    "cargo clean",
+    "rm ./rvgen",
+    "rm rvprog.elf",
+    "rm -rf rvprogs",
+]
