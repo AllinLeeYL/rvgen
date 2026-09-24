@@ -8,7 +8,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 
-use crate::riscv::{Csr, Instruction, XReg};
+use crate::riscv::{Csr, FReg, Instruction, XReg};
 use crate::utils::{ElfSection, ElfSymbol, SHF_ALLOC, SHF_WRITE, build_elf_with_symbols};
 
 pub fn pc_relative(delta: i64) -> Result<[u32; 2]> {
@@ -40,8 +40,9 @@ fn append_words(dst: &mut Vec<u8>, words: &[u32]) {
 }
 
 /// Wraps a workload body in a machine-mode trap handler and HTIF exit runtime,
-/// producing a complete ELF executable. Initializes integer registers and FPU
-/// control state before entering the body; requires the F extension.
+/// producing a complete ELF executable. Initializes integer registers, all
+/// floating-point registers (f0–f31) to +0.0, and FPU control state before
+/// entering the body; requires the F/D extension.
 fn executable(body: &[u8], is_64bit: bool, start_addr: u64) -> Result<Vec<u8>> {
     if start_addr & 3 != 0 || body.len() & 1 != 0 {
         bail!("entry must be four-byte aligned and body must contain whole instructions");
@@ -79,6 +80,25 @@ fn executable(body: &[u8], is_64bit: bool, start_addr: u64) -> Result<Vec<u8>> {
         },
     ] {
         instr.append_bytes(&mut text)?;
+    }
+
+    // Initialize f0–f31 to +0.0 so that unwritten FP registers read
+    // identically in both Spike (which NaN-boxes 128-bit storage) and RTL
+    // (which resets its 64-bit register file to zero).
+    //
+    // fmv.d.x fd, x0  writes the 64-bit bit-pattern of x0 (all zeros) into
+    // fd, which Spike stores as a fully NaN-boxed double (r.v[1] = ~0).
+    // Without this, reading an uninitialised register in Spike returns the
+    // canonical NaN (0x7ff8000000000000) while RTL returns +0.0
+    // (0x0000000000000000), causing spurious mismatches.
+    for index in 0..32u8 {
+        let fd = FReg::new(index)?;
+        if is_64bit {
+            Instruction::FmvDX { rd: fd, rs1: XReg::ZERO }
+        } else {
+            Instruction::FmvWX { rd: fd, rs1: XReg::ZERO }
+        }
+        .append_bytes(&mut text)?;
     }
 
     // x0 is hardwired to zero. Clear x1-x31 after all setup so scratch

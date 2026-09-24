@@ -1,5 +1,5 @@
 use crate::context::GenContext;
-use crate::riscv::{Instruction, Opcode, Xlen};
+use crate::riscv::{Instruction, InstructionClass, Opcode, Xlen};
 use anyhow::{Ok, Result};
 use rand::{Rng, RngExt};
 
@@ -19,9 +19,27 @@ impl BasicBlock {
         }
     }
 
-    pub fn run(&mut self, rng: &mut (impl Rng + ?Sized), cxt: &GenContext) -> Result<()> {
+    pub fn run(&mut self, rng: &mut (impl Rng + ?Sized), ctx: &GenContext) -> Result<()> {
+        let mut disabled_instrs = ctx.disabled_instrs.clone();
+        // These classes include both standard and compressed branches and jumps.
+        for class in [
+            InstructionClass::Branch,
+            InstructionClass::Jal,
+            InstructionClass::Jalr,
+        ] {
+            disabled_instrs.extend(class.opcodes());
+        }
+        // Explicit traps and trap returns also transfer control out of the block.
+        disabled_instrs.extend([
+            Opcode::Ecall,
+            Opcode::Ebreak,
+            Opcode::CEbreak,
+            Opcode::Sret,
+            Opcode::Mret,
+        ]);
+
         for _ in 0..self.budget {
-            let opcode = choose_instr_with_rng(rng, &cxt.disabled_instrs);
+            let opcode = choose_instr_with_rng(rng, &disabled_instrs);
             let instr = opcode.random(rng, Xlen::X64)?;
             self.instrs.push(instr);
         }

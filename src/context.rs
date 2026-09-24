@@ -1,16 +1,16 @@
 use crate::options::OneOpts;
 use crate::riscv::fields::Xlen;
 use crate::riscv::instruction::{Extension, Opcode};
-// use crate::riscv::registers::PrivilegeLevel;
+use crate::riscv::registers::PrivilegeLevel;
 
 struct Target {
     xlen: Xlen,
     extensions: Vec<Extension>,
-    // privilege: PrivilegeLevel,
+    privilege: PrivilegeLevel,
 }
 
 pub struct GenContext {
-    // target: Target,
+    target: Target,
     // pc: u64,
     // registers: RegisterState,
     // memory: MemoryState,
