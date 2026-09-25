@@ -1,0 +1,30 @@
+# Rust build output
+/target/
+
+# Generated programs and simulator output
+*.elf
+*.S
+/elfs/
+/litmus/
+/dbgcmds/
+/generated/
+
+# Local editor settings and environment
+.vscode/
+.env
+.env.*
+.envrc
+.venv/
+venv/
+__pycache__/
+.pypirc
+
+# executable files
+rvgen
+/bin/
+
+# Potentional reference
+/refer
+
+# Added by cargo
+/target
