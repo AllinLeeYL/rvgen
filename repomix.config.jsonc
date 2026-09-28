@@ -1,0 +1,19 @@
+{
+  "$schema": "https://repomix.com/schemas/latest/schema.json",
+
+  "output": {
+    "filePath": "rvgen.xml",
+    "style": "xml"
+  },
+
+  "ignore": {
+    "customPatterns": [
+      "build/**",
+      "elfs/**",
+      "rvprogs/**",
+      "target/**",
+      ".cache/**",
+      "*.log"
+    ]
+  }
+}
