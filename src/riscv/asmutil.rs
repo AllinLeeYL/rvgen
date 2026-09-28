@@ -1,5 +1,5 @@
 //! Small assembly helpers with explicit XLEN behavior.
-use super::{Instruction, XReg, Xlen};
+use super::{Instruction, XReg, Xlen, Csr};
 
 /// Split a 32-bit bit pattern into a LUI upper field and signed 12-bit low
 /// immediate. The low sign bit carries into the upper field. Recombination
@@ -46,5 +46,19 @@ pub const fn to_unsigned(value: i64, xlen: Xlen) -> u64 {
     match xlen {
         Xlen::X32 => value as u32 as u64,
         Xlen::X64 => value as u64,
+    }
+}
+
+/// Extract the destination register and CSR address from a CSR instruction.
+/// Returns `None` for non-CSR instructions.
+pub fn csr_rd_and_addr(instr: &Instruction) -> Option<(XReg, Csr)> {
+    match *instr {
+        Instruction::Csrrw { rd, csr, .. }
+        | Instruction::Csrrs { rd, csr, .. }
+        | Instruction::Csrrc { rd, csr, .. }
+        | Instruction::Csrrwi { rd, csr, .. }
+        | Instruction::Csrrsi { rd, csr, .. }
+        | Instruction::Csrrci { rd, csr, .. } => Some((rd, csr)),
+        _ => None,
     }
 }

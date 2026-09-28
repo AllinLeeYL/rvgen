@@ -1,4 +1,5 @@
 use clap::Args;
+use crate::riscv::instruction::{Opcode, Extension};
 
 #[derive(Args, Clone)]
 pub struct CommonOpts {
@@ -10,9 +11,13 @@ pub struct CommonOpts {
     #[arg(long, default_value = "1")]
     pub num_cores: usize,
 
+    // ISA Extension
+    #[arg(long, default_value = "i", value_delimiter = ',')]
+    pub isa: Vec<Extension>,
+
     // Disable specific instructions
-    #[arg(long, default_value = "wfi")]
-    pub disabled_instrs: Vec<String>,
+    #[arg(long, default_value = "wfi", value_delimiter = ',')]
+    pub disabled_instrs: Vec<Opcode>,
 }
 
 #[derive(Args, Clone)]

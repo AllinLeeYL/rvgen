@@ -9,7 +9,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 
 use crate::riscv::{Csr, FReg, Instruction, XReg};
-use crate::utils::{ElfSection, ElfSymbol, SHF_ALLOC, SHF_WRITE, build_elf_with_symbols};
+use crate::utils::{ElfSection, ElfSymbol, SHF_ALLOC, SHF_WRITE, SHF_EXECINSTR, build_elf_with_symbols};
 
 pub fn pc_relative(delta: i64) -> Result<[u32; 2]> {
     let hi = (delta + 0x800) >> 12;
@@ -112,6 +112,10 @@ fn executable(body: &[u8], is_64bit: bool, start_addr: u64) -> Result<Vec<u8>> {
         .append_bytes(&mut text)?;
     }
 
+    // Filled later with AUIPC/ADDI that load the SMC address into x5.
+    let smc_setup_offset = text.len();
+    text.extend_from_slice(&[0u8; 8]);
+
     // Append workload body
     text.extend_from_slice(body);
 
@@ -200,6 +204,11 @@ fn executable(body: &[u8], is_64bit: bool, start_addr: u64) -> Result<Vec<u8>> {
     let fromhost_addr = tohost_addr
         .checked_add(64)
         .ok_or_else(|| anyhow::anyhow!("runtime address overflow"))?;
+    let smc_addr = fromhost_addr
+        .checked_add(8)
+        .and_then(|end| end.checked_add(63))
+        .ok_or_else(|| anyhow::anyhow!("SMC address overflow"))?
+        & !63;
 
     let entry_pair = pc_relative(trap_offset as i64)?;
     let writer_pair = pc_relative((tohost_addr - start_addr) as i64 - writer_offset as i64)?;
@@ -223,6 +232,12 @@ fn executable(body: &[u8], is_64bit: bool, start_addr: u64) -> Result<Vec<u8>> {
     let mut fromhost_section = tohost_section.clone();
     fromhost_section.name = ".fromhost".to_string();
     fromhost_section.addr = fromhost_addr;
+
+    const SMC_SIZE: usize = 4096;
+    let mut smc_section = ElfSection::new(".smc", vec![0u8; SMC_SIZE]);
+    smc_section.addr = smc_addr;
+    smc_section.align = 64;
+    smc_section.flags = SHF_ALLOC | SHF_WRITE | SHF_EXECINSTR;
 
     let symbols = [
         ElfSymbol {
@@ -263,7 +278,7 @@ fn executable(body: &[u8], is_64bit: bool, start_addr: u64) -> Result<Vec<u8>> {
     ];
 
     build_elf_with_symbols(
-        &[code_section, tohost_section, fromhost_section],
+        &[code_section, tohost_section, fromhost_section, smc_section],
         &symbols,
         is_64bit,
         start_addr,

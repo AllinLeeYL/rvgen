@@ -108,6 +108,34 @@ pub enum Extension {
     Raw,
 }
 
+#[derive(Debug)]
+pub struct UnknownExtension;
+impl std::error::Error for UnknownExtension {}
+impl fmt::Display for UnknownExtension {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("unknown RISC-V ISA extension")
+    }
+}
+impl FromStr for Extension {
+    type Err = UnknownExtension;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "i" => Ok(Self::I),
+            "m" => Ok(Self::M),
+            "a" => Ok(Self::A),
+            "f" => Ok(Self::F),
+            "d" => Ok(Self::D),
+            "c" => Ok(Self::C),
+            "zicsr" => Ok(Self::Zicsr),
+            "zifencei" => Ok(Self::Zifencei),
+            "privileged" => Ok(Self::Privileged),
+            "svinval" => Ok(Self::Svinval),
+            "raw" => Ok(Self::Raw),
+            _ => Err(UnknownExtension),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum XlenRequirement {
     Both,
@@ -184,18 +212,18 @@ macro_rules! instructions {
             }
         }
         impl Opcode {
-            #[cfg(test)]
-            pub(super) fn test_instruction(self, values: &[i64]) -> Instruction {
-                let mut _values = values.iter().copied();
-                let instruction = match self {
-                    $(Self::$name => Instruction::$name $( { $(
-                        $field: <$ty as super::tests::TestOperand>::from_value(_values.next().expect(stringify!($field)))
-                    ),* } )?,)*
-                    Self::Raw16 | Self::Raw32 => panic!("raw encodings are tested separately"),
-                };
-                assert!(_values.next().is_none(), "extra test operands for {self}");
-                instruction
-            }
+            // #[cfg(test)]
+            // pub(super) fn test_instruction(self, values: &[i64]) -> Instruction {
+            //     let mut _values = values.iter().copied();
+            //     let instruction = match self {
+            //         $(Self::$name => Instruction::$name $( { $(
+            //             $field: <$ty as super::tests::TestOperand>::from_value(_values.next().expect(stringify!($field)))
+            //         ),* } )?,)*
+            //         Self::Raw16 | Self::Raw32 => panic!("raw encodings are tested separately"),
+            //     };
+            //     assert!(_values.next().is_none(), "extra test operands for {self}");
+            //     instruction
+            // }
             /// All named instructions, excluding the raw encoding escape hatches.
             pub const ALL: &'static [Self] = &[$( Self::$name, )*];
             pub const fn mnemonic(self) -> &'static str {

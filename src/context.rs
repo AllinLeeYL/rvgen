@@ -9,24 +9,37 @@ struct Target {
     privilege: PrivilegeLevel,
 }
 
+struct MemoryBlock {
+    addr: usize,
+    size: usize,
+    flags: u64,
+}
+
+#[derive(Default)]
+struct MemoryState {
+    blocks: Vec<MemoryBlock>,
+}
+
 pub struct GenContext {
     target: Target,
     // pc: u64,
     // registers: RegisterState,
-    // memory: MemoryState,
+    memory: MemoryState,
     // privilege: PrivilegeLevel,
     pub disabled_instrs: Vec<Opcode>,
 }
 
 impl GenContext {
     pub fn new(opts: &OneOpts) -> Self {
-        let disabled_instrs = opts
-            .common
-            .disabled_instrs
-            .iter()
-            .filter_map(|s| s.parse::<Opcode>().ok())
-            .collect();
-        Self { disabled_instrs }
+        Self { 
+            target: Target { 
+                xlen: Xlen::X64, 
+                extensions: opts.common.isa.clone(),
+                privilege: PrivilegeLevel::Machine 
+            },
+            memory: MemoryState::default(),
+            disabled_instrs: opts.common.disabled_instrs.clone(),
+        }
     }
 
     pub fn is_disabled(&self, opcode: Opcode) -> bool {

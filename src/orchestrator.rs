@@ -22,7 +22,7 @@ impl Core {
             bbs: cut_cake_randomly(num_instrs, Some(1), Some(32), rng)
                 .into_iter()
                 .enumerate()
-                .map(|(id, budget)| BasicBlock::new(id, budget))
+                .map(|(id, budget)| BasicBlock::new(id, rand::random::<bool>(), budget))
                 .collect(),
         };
         debug_assert_eq!(

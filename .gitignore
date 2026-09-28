@@ -28,3 +28,7 @@ rvgen
 
 # Added by cargo
 /target
+
+# irrelevant folders
+out/
+.agents/

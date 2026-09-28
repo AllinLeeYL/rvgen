@@ -26,11 +26,23 @@ run = [
     "python3 scripts/analyze_elf.py",
 ]
 
+[tasks.count]
+description = "Count the number of execcuted instructions"
+run = [
+    "which python3",
+    "python3 scripts/count_spike_instructions.py rvprogs/ --output out/stats.toml --plot out/stats.png",
+]
+
+[tasks.snapshot]
+description = "Snapshot current working tree and upload to Github"
+run = "./scripts/snapshot.sh"
+
 [tasks.clean]
 description = "Clean the build files"
 run = [
     "cargo clean",
-    "rm ./rvgen",
-    "rm rvprog.elf",
+    "rm -f ./rvgen",
+    "rm -f rvprog.elf",
     "rm -rf rvprogs",
+    "rm -rf out",
 ]

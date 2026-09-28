@@ -1,19 +1,23 @@
 use crate::context::GenContext;
-use crate::riscv::{Instruction, InstructionClass, Opcode, Xlen};
+use crate::riscv::asmutil::load_imm32;
+use crate::riscv::asmutil::csr_rd_and_addr;
+use crate::riscv::{Instruction, InstructionClass, Opcode, XReg, Xlen};
 use anyhow::{Ok, Result};
 use rand::{Rng, RngExt};
 
 #[derive(Default)]
 pub struct BasicBlock {
     pub id: usize,
+    pub is_smc: bool,
     pub budget: usize,
     pub instrs: Vec<Instruction>,
 }
 
 impl BasicBlock {
-    pub fn new(id: usize, budget: usize) -> Self {
+    pub fn new(id: usize, is_smc: bool, budget: usize) -> Self {
         Self {
             id: id,
+            is_smc: is_smc,
             budget: budget,
             instrs: Vec::with_capacity(budget),
         }
@@ -42,6 +46,15 @@ impl BasicBlock {
             let opcode = choose_instr_with_rng(rng, &disabled_instrs);
             let instr = opcode.random(rng, Xlen::X64)?;
             self.instrs.push(instr);
+
+            // If current instr reads an implementation-dependent CSR into rd,
+            // overwrite rd with a random value so the test stays deterministic.
+            if let Some((rd, csr)) = csr_rd_and_addr(&instr) {
+                if rd != XReg::ZERO && csr.is_implementation_dependent() {
+                    let fixup = load_imm32(rd, rng.random::<i32>(), Xlen::X64);
+                    self.instrs.extend_from_slice(&fixup);
+                }
+            }
         }
         Ok(())
     }

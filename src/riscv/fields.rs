@@ -72,6 +72,26 @@ impl fmt::Display for FReg {
         write!(f, "f{}", self.0)
     }
 }
+impl Csr {
+    /// Returns `true` for CSRs whose read value is implementation-dependent
+    /// and may differ between RISC-V implementations. This includes:
+    /// - Machine counter/timers: mcycle, minstret, mhpmcounter3–31 (0xB00–0xB1F)
+    ///   and their RV32 high halves (0xB80–0xB9F)
+    /// - User-visible counter shadows: cycle, time, instret, hpmcounter3–31
+    ///   (0xC00–0xC1F) and their high halves (0xC80–0xC9F)
+    /// - Read-only machine ID CSRs: mvendorid, marchid, mimpid, mhartid,
+    ///   mconfigptr (0xF11–0xF15)
+    pub const fn is_implementation_dependent(&self) -> bool {
+        let addr = self.index();
+        matches!(addr,
+            0xB00..=0xB1F   // mcycle, minstret, mhpmcounter3–31
+            | 0xB80..=0xB9F // mcycleh, minstreth, mhpmcounterh3–31
+            | 0xC00..=0xC1F // cycle, time, instret, hpmcounter3–31
+            | 0xC80..=0xC9F // cycleh, timeh, instreth, hpmcounterh3–31
+            | 0xF11..=0xF15 // mvendorid, marchid, mimpid, mhartid, mconfigptr
+        )
+    }
+}
 impl fmt::Display for Csr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "0x{:03x}", self.0)

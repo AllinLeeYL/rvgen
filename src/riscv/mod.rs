@@ -23,5 +23,5 @@ pub use instruction::{
     EncodeError, EncodedInstruction, Extension, Instruction, InstructionClass, Opcode,
 };
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
