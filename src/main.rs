@@ -1,10 +1,12 @@
-mod options;
 mod basicblock;
+mod elf;
+mod hart;
+mod memory;
+mod options;
 mod orchestrator;
 mod riscv;
+mod target;
 mod utils;
-mod context;
-mod runtime;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

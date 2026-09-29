@@ -173,12 +173,16 @@ impl Operand for FReg {
         super::registers::random_float_register(rng)
     }
 }
+/// CSRs that are safe to access whatever extensions are enabled. The workload
+/// generator widens this per target (see `Target::workload_csrs`).
+pub const SAFE_CSRS: &[Csr] = &[Csr::MSCRATCH, Csr::SSCRATCH];
 impl Operand for Csr {
     fn bits(self) -> u32 {
         self.index() as u32
     }
     fn sample(_: Opcode, _: &'static str, _: Xlen, rng: &mut (impl Rng + ?Sized)) -> Self {
-        Self::new(rng.random_range(0..=4095)).unwrap()
+        // Self::new(rng.random_range(0..=4095)).unwrap()
+        SAFE_CSRS[rng.random_range(0..SAFE_CSRS.len())]
     }
 }
 impl Operand for i32 {

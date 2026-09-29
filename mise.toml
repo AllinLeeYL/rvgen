@@ -1,20 +1,13 @@
 [tasks.build]
 description = "Build the release-version rvgen"
 dir = "."
-run = "cargo build --release && cp target/release/rvgen ./rvgen"
+run = "cargo build --release"
 sources = [
     "Cargo.toml",
     "Cargo.lock",
     "src/**/*.rs",
 ]
 outputs = ["./rvgen"]
-
-[tasks.run]
-depends = ["build"]
-description = "Run the rvgen after building the latest updates."
-run = [
-    "./rvgen"
-]
 
 [tasks.disassemble]
 run = [
@@ -30,7 +23,7 @@ run = [
 description = "Count the number of execcuted instructions"
 run = [
     "which python3",
-    "python3 scripts/count_spike_instructions.py rvprogs/ --output out/stats.toml --plot out/stats.png",
+    "python3 scripts/count_spike_instructions.py elfs/ --output out/stats.toml --plot out/stats.png",
 ]
 
 [tasks.snapshot]
@@ -41,8 +34,7 @@ run = "./scripts/snapshot.sh"
 description = "Clean the build files"
 run = [
     "cargo clean",
-    "rm -f ./rvgen",
     "rm -f rvprog.elf",
-    "rm -rf rvprogs",
+    "rm -rf elfs",
     "rm -rf out",
 ]
