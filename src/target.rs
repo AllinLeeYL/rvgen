@@ -80,6 +80,33 @@ impl Target {
         csrs
     }
 
+    /// ISA string for Spike, e.g. `rv64imafd_zicsr_zifencei`.
+    pub fn spike_isa(&self) -> String {
+        let mut isa = format!("rv{}i", self.xlen.bits());
+        for (extension, letter) in [
+            (Extension::M, 'm'),
+            (Extension::A, 'a'),
+            (Extension::F, 'f'),
+            (Extension::D, 'd'),
+            (Extension::C, 'c'),
+        ] {
+            if self.has(extension) {
+                isa.push(letter);
+            }
+        }
+        for (extension, name) in [
+            (Extension::Zicsr, "zicsr"),
+            (Extension::Zifencei, "zifencei"),
+            (Extension::Svinval, "svinval"),
+        ] {
+            if self.has(extension) {
+                isa.push('_');
+                isa.push_str(name);
+            }
+        }
+        isa
+    }
+
     pub fn instruction_alignment(&self) -> usize {
         if self.has(Extension::C) { 2 } else { 4 }
     }

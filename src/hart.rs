@@ -1,13 +1,26 @@
-use anyhow::{Ok, Result};
+use anyhow::{Ok, Result, anyhow, ensure};
 use rand::rngs::StdRng;
 use rand::{Rng, RngExt};
 
 use crate::basicblock::BasicBlock;
 use crate::orchestrator::GlobalState;
-use crate::riscv::asmutil::load_imm;
+use crate::riscv::asmutil::{load_imm, load_imm_fixed, twos_complement};
 use crate::riscv::{Csr, Extension, FReg, Instruction, SAFE_CSRS, XReg, Xlen};
+use crate::spike::ArchState;
 use crate::target::Target;
 use crate::utils::cut_cake_randomly;
+
+/// Labels, exported as ELF symbols, of the parts of a hart's code.
+pub const INIT_LABEL: &str = "_init";
+pub const STIMULUS_LABEL: &str = "_stimulus";
+pub const CHECK_LABEL: &str = "_check";
+pub const EXIT_LABEL: &str = "_exit";
+pub const TRAP_HANDLER_LABEL: &str = "_trap_handler";
+
+/// HTIF exit code reported when the self-check finds a mismatch. It lies above
+/// every `mcause + 1` the trap handler reports for exceptions, and its low byte
+/// is nonzero so it survives truncation to an 8-bit process exit status.
+pub const MISMATCH_EXIT_CODE: i32 = 0xaa;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Privilege {
@@ -78,37 +91,60 @@ impl Hart {
         core
     }
 
+    /// Generate the hart's code. With `self_check`, a self-check block holding
+    /// placeholder values precedes the exit; patch the reference values in with
+    /// [`Hart::set_expected`] before encoding the final program.
     pub fn run(
         &mut self,
         rng: &mut (impl Rng + ?Sized),
         target: &Target,
         state: &mut GlobalState,
+        self_check: bool,
     ) -> Result<()> {
         for bb in self.bbs.iter_mut() {
             bb.run(rng, target, state)?;
         }
         let tohost = state.memory.get(".tohost")?.region.start;
 
-        // Layout of the hart's code, starting at the entry point:
-        //   init: point mtvec at the handler, randomize registers
-        //   workload
-        //   exit: report success to tohost and spin
-        //   (padding to 4 bytes, never executed)
-        //   trap handler: report mcause to tohost and spin
+        // Layout of the hart's code and the symbol marking each part:
+        //   _start         point mtvec at the handler (entry point)
+        //   _init          randomize registers
+        //   _stimulus      workload
+        //   _check         (optional) compare all registers against Spike's values
+        //   _exit          report the check's verdict (or success) to tohost and spin
+        //                  (padding to 4 bytes, never executed)
+        //   _trap_handler  report mcause to tohost and spin
         // mtvec is set first so a trap anywhere after it terminates the test.
-        let mut init = set_mtvec(0).to_vec();
-        init.extend(init_registers(rng, target)?);
-        let exit = report_to_tohost(
+        // `_start` is exported by the ELF encoder for the whole code, so the
+        // mtvec block carries no label of its own.
+        let init = init_registers(rng, target)?;
+        if let Some(first) = self.bbs.first_mut() {
+            first.label = Some(STIMULUS_LABEL.into());
+        }
+        let check = if self_check {
+            self_check_block(&ArchState::default(), target)?
+        } else {
+            Vec::new()
+        };
+        let verdict = if self_check {
+            // The check leaves 0 or MISMATCH_EXIT_CODE in x5.
+            Instruction::Slli {
+                rd: XReg::X5,
+                rs1: XReg::X5,
+                shamt: 1,
+            }
+        } else {
             Instruction::Addi {
                 rd: XReg::X5,
                 rs1: XReg::ZERO,
                 imm: 1,
-            },
-            tohost,
-            target.xlen,
-        );
-        let before_handler = code_size(&init)
+            }
+        };
+        let exit = report_to_tohost(verdict, tohost, target.xlen);
+        let before_handler = code_size(&set_mtvec(0))
+            + code_size(&init)
             + self.bbs.iter().map(|bb| code_size(&bb.instrs)).sum::<usize>()
+            + code_size(&check)
             + code_size(&exit);
         let mut padding = Vec::new();
         if before_handler % 4 != 0 {
@@ -116,28 +152,71 @@ impl Hart {
             padding.push(Instruction::cnop());
         }
         let handler_offset = before_handler + code_size(&padding);
-        init.splice(..3, set_mtvec(handler_offset as i64));
 
         self.state.mtvec_valid = true;
-        self.bbs.insert(
-            0,
-            BasicBlock {
-                instrs: init,
-                ..Default::default()
-            },
+        self.bbs.splice(
+            0..0,
+            [
+                BasicBlock {
+                    instrs: set_mtvec(handler_offset as i64).to_vec(),
+                    ..Default::default()
+                },
+                BasicBlock {
+                    instrs: init,
+                    label: Some(INIT_LABEL.into()),
+                    ..Default::default()
+                },
+            ],
         );
-        self.bbs.push(BasicBlock {
-            instrs: exit,
-            label: Some("_exit".into()),
-            ..Default::default()
-        });
-        for instrs in [padding, trap_handler(tohost, target.xlen)] {
+        if self_check {
             self.bbs.push(BasicBlock {
-                instrs,
+                instrs: check,
+                label: Some(CHECK_LABEL.into()),
                 ..Default::default()
             });
         }
+        self.bbs.push(BasicBlock {
+            instrs: exit,
+            label: Some(EXIT_LABEL.into()),
+            ..Default::default()
+        });
+        self.bbs.push(BasicBlock {
+            instrs: padding,
+            ..Default::default()
+        });
+        self.bbs.push(BasicBlock {
+            instrs: trap_handler(tohost, target.xlen),
+            label: Some(TRAP_HANDLER_LABEL.into()),
+            ..Default::default()
+        });
         Ok(())
+    }
+
+    /// Byte offset of the self-check block from the hart's first instruction.
+    pub fn check_offset(&self) -> Result<usize> {
+        let index = self.check_index()?;
+        Ok(self.bbs[..index].iter().map(|bb| code_size(&bb.instrs)).sum())
+    }
+
+    /// Replace the self-check's placeholder values with `expected`. The block
+    /// keeps its size, so no other code moves and the register state reaching
+    /// it is unchanged.
+    pub fn set_expected(&mut self, expected: &ArchState, target: &Target) -> Result<()> {
+        let index = self.check_index()?;
+        let instrs = self_check_block(expected, target)?;
+        ensure!(
+            code_size(&instrs) == code_size(&self.bbs[index].instrs),
+            "self-check block changed size while patching"
+        );
+        self.bbs[index].instrs = instrs;
+        Ok(())
+    }
+
+    fn check_index(&self) -> Result<usize> {
+        self.bbs
+            .iter()
+            .position(|bb| bb.label.as_deref() == Some(CHECK_LABEL))
+            .ok_or_else(|| anyhow!("hart has no self-check block"))
     }
 
     // pub fn encode(&self, target: &Target) -> Result<Vec<u8>> {
@@ -199,6 +278,93 @@ fn init_registers(rng: &mut (impl Rng + ?Sized), target: &Target) -> Result<Vec<
     for index in 1..32 {
         instrs.extend(load_imm(XReg::new(index)?, random_xlen(rng, xlen), xlen));
     }
+    Ok(instrs)
+}
+
+/// Compare every register with `expected` and leave the verdict in x5: 0 on a
+/// match, [`MISMATCH_EXIT_CODE`] otherwise. The workload may use every
+/// register, so none is reserved: x31 is stashed in mscratch to serve as the
+/// first scratch register, x1 becomes the accumulator once checked, and each
+/// register checked is free to reuse afterwards. Constants are loaded with
+/// [`load_imm_fixed`] so the block's size does not depend on `expected`.
+fn self_check_block(expected: &ArchState, target: &Target) -> Result<Vec<Instruction>> {
+    use Instruction::*;
+    const ACC: XReg = XReg::X1;
+    const TMP: XReg = XReg::X31;
+    let xlen = target.xlen;
+    let xval = |index: usize| twos_complement(expected.xregs[index], xlen);
+
+    // acc |= value ^ constant, with `scratch` holding the constant.
+    let fold = |value: XReg, scratch: XReg, constant: i64| {
+        let mut seq = load_imm_fixed(scratch, constant, xlen);
+        seq.push(Xor {
+            rd: scratch,
+            rs1: scratch,
+            rs2: value,
+        });
+        seq.push(Or {
+            rd: ACC,
+            rs1: ACC,
+            rs2: scratch,
+        });
+        seq
+    };
+
+    let mut instrs = vec![Csrrw {
+        rd: XReg::ZERO,
+        rs1: TMP,
+        csr: Csr::MSCRATCH,
+    }];
+    instrs.extend(load_imm_fixed(TMP, xval(1), xlen));
+    instrs.push(Xor {
+        rd: ACC,
+        rs1: ACC,
+        rs2: TMP,
+    });
+    for index in 2..31 {
+        instrs.extend(fold(XReg::new(index as u8)?, TMP, xval(index)));
+    }
+    // Restore x31 and check it with x2, which is free by now.
+    instrs.push(Csrrw {
+        rd: TMP,
+        rs1: XReg::ZERO,
+        csr: Csr::MSCRATCH,
+    });
+    instrs.extend(fold(TMP, XReg::X2, xval(31)));
+
+    if target.has(Extension::F) {
+        // FMV.X.D moves all 64 bits but only exists on RV64D; otherwise
+        // FMV.X.W moves the low 32 bits, sign-extended to XLEN.
+        let wide = xlen == Xlen::X64 && target.has(Extension::D);
+        for index in 0..32 {
+            let rs1 = FReg::new(index as u8)?;
+            instrs.push(if wide {
+                FmvXD { rd: TMP, rs1 }
+            } else {
+                FmvXW { rd: TMP, rs1 }
+            });
+            let raw = expected.fregs[index];
+            let constant = if wide { raw as i64 } else { raw as u32 as i32 as i64 };
+            instrs.extend(fold(TMP, XReg::X2, constant));
+        }
+    }
+
+    // x5 = acc != 0 ? MISMATCH_EXIT_CODE : 0, without a branch.
+    instrs.push(Sltu {
+        rd: XReg::X5,
+        rs1: XReg::ZERO,
+        rs2: ACC,
+    });
+    instrs.push(Sub {
+        rd: XReg::X5,
+        rs1: XReg::ZERO,
+        rs2: XReg::X5,
+    });
+    instrs.push(Andi {
+        rd: XReg::X5,
+        rs1: XReg::X5,
+        imm: MISMATCH_EXIT_CODE,
+    });
     Ok(instrs)
 }
 

@@ -1,13 +1,14 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::elf::{Elf, HostInterface, write_executable};
 use crate::hart::Hart;
 use crate::memory::{MemoryLayout, MemoryRegion, Permissions, Section};
 use crate::options::{ManyOpts, OneOpts};
+use crate::spike::Spike;
 use crate::target::Target;
 
 #[derive(Default)]
@@ -20,10 +21,11 @@ pub struct Orchestrator {
     harts: Vec<Hart>,
     state: GlobalState, // Everything that may change during runtime is defined here.
     rng: StdRng,
+    self_check: bool,
 }
 
 impl Orchestrator {
-    fn new(target: Target, seed: u64) -> Self {
+    fn new(target: Target, seed: u64, self_check: bool) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
         let harts = std::iter::repeat_with(|| Hart::new(target.num_instrs, &mut rng))
             .take(target.num_cores)
@@ -51,12 +53,13 @@ impl Orchestrator {
             harts,
             state,
             rng,
+            self_check,
         }
     }
 
     fn run(&mut self) -> Result<()> {
         for core in self.harts.iter_mut() {
-            core.run(&mut self.rng, &self.target, &mut self.state)?;
+            core.run(&mut self.rng, &self.target, &mut self.state, self.self_check)?;
         }
         self.merge_memory_sections();
         Ok(())
@@ -66,15 +69,40 @@ impl Orchestrator {
         Ok(())
     }
 
-    fn encode(&self) -> Result<Vec<u8>> {
+    /// Encode the ELF image and return it with the address of core 0's code.
+    fn encode(&self) -> Result<(Vec<u8>, u64)> {
         // ELF output packages core 0's workload
         let Some(hart) = self.harts.first() else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), 0));
         };
         let mut elf = Elf::new(&self.target, &self.state.memory)?;
         elf.add_code(&hart.bbs)?;
+        let text = elf.section_index(".text").expect("add_code places .text");
+        let text_addr = elf.sections()[text].addr;
         elf.apply(HostInterface)?;
-        elf.finish()
+        Ok((elf.finish()?, text_addr))
+    }
+
+    /// Resolve the self-check against Spike: run the placeholder program up to
+    /// the check, patch the observed registers in as expected values, and
+    /// confirm the final program passes on Spike. Returns the final image.
+    fn resolve_self_check(&mut self, spike: &Spike) -> Result<Vec<u8>> {
+        let (draft, text_addr) = self.encode()?;
+        let hart = &mut self.harts[0];
+        let check_pc = text_addr + hart.check_offset()? as u64;
+        let expected = spike
+            .state_at(&draft, check_pc)
+            .context("cannot compute the self-check's expected values")?;
+        hart.set_expected(&expected, &self.target)?;
+
+        let (image, final_text_addr) = self.encode()?;
+        ensure!(final_text_addr == text_addr, "code moved while patching the self-check");
+        let code = spike.exit_code(&image)?;
+        ensure!(
+            code == 0,
+            "the self-checking program fails on Spike itself (exit code {code})"
+        );
+        Ok(image)
     }
 }
 
@@ -97,12 +125,18 @@ pub fn gen_one(opts: OneOpts, mkdir: bool) -> Result<()> {
             fs::create_dir_all(parent)?;
         }
     }
+    let self_check = !opts.common.no_self_check;
+    let spike = Spike::new(&opts.common.spike, &target);
     let mut rng = rand::rng();
-    let mut orchestrator = Orchestrator::new(target, rng.random());
+    let mut orchestrator = Orchestrator::new(target, rng.random(), self_check);
 
     // generate code -- it allocate memory address on the fly
     orchestrator.run()?;
-    let bytes = orchestrator.encode()?;
+    let bytes = if self_check {
+        orchestrator.resolve_self_check(&spike)?
+    } else {
+        orchestrator.encode()?.0
+    };
     write_executable(&bytes, Path::new(&opts.output))
 }
 

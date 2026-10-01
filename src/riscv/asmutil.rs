@@ -55,6 +55,31 @@ pub fn load_imm(rd: XReg, value: i64, xlen: Xlen) -> Vec<Instruction> {
     seq
 }
 
+/// Materialize an XLEN-wide value with a sequence whose length depends only on
+/// XLEN (2 instructions on RV32, 8 on RV64), so the value can be patched in
+/// later without moving any code.
+pub fn load_imm_fixed(rd: XReg, value: i64, xlen: Xlen) -> Vec<Instruction> {
+    if xlen == Xlen::X32 {
+        return load_imm32(rd, value as i32, xlen).to_vec();
+    }
+    // The top 31 bits fit LUI+ADDIW; the low 33 bits are shifted in as three
+    // non-negative 11-bit chunks, so each ADDI acts as an OR.
+    let mut seq = load_imm32(rd, (value >> 33) as i32, xlen).to_vec();
+    for shift in [22, 11, 0] {
+        seq.push(Instruction::Slli {
+            rd,
+            rs1: rd,
+            shamt: 11,
+        });
+        seq.push(Instruction::Addi {
+            rd,
+            rs1: rd,
+            imm: ((value >> shift) & 0x7ff) as i32,
+        });
+    }
+    seq
+}
+
 /// Interpret the low XLEN bits as a signed two's-complement number.
 pub const fn twos_complement(value: u64, xlen: Xlen) -> i64 {
     match xlen {
@@ -124,5 +149,31 @@ mod tests {
         }
         let seq = load_imm(XReg::A0, 0x8000_0000, Xlen::X32);
         assert_eq!(eval(&seq, Xlen::X32), 0x8000_0000);
+    }
+
+    #[test]
+    fn load_imm_fixed_has_constant_length() {
+        let values = [
+            0,
+            1,
+            -1,
+            0x7ff,
+            0x800,
+            0x8000_0000,
+            0x1_2345_6789,
+            0x0000_0001_ffff_ffff,
+            0x7fff_ffff_ffff_f800,
+            i64::MAX,
+            i64::MIN,
+            0xfb62_b6ae_ccf4_b947_u64 as i64,
+        ];
+        for value in values {
+            let seq = load_imm_fixed(XReg::A0, value, Xlen::X64);
+            assert_eq!(seq.len(), 8, "{value:#x}");
+            assert_eq!(eval(&seq, Xlen::X64), value as u64, "{value:#x}");
+            let seq = load_imm_fixed(XReg::A0, value, Xlen::X32);
+            assert_eq!(seq.len(), 2, "{value:#x}");
+            assert_eq!(eval(&seq, Xlen::X32), value as u32 as u64, "{value:#x}");
+        }
     }
 }

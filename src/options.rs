@@ -38,6 +38,15 @@ pub struct CommonOpts {
     // Disable specific instructions
     #[arg(long, default_value = "wfi,lr.w,lr.d", value_delimiter = ',')]
     pub disabled_instrs: Vec<Opcode>,
+
+    /// Skip the self-check: the program then reports success whenever it
+    /// reaches the end, and Spike is not needed.
+    #[arg(long)]
+    pub no_self_check: bool,
+
+    /// Spike executable that computes the self-check's expected values.
+    #[arg(long, default_value = "spike")]
+    pub spike: String,
 }
 
 #[derive(Args, Clone)]
