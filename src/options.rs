@@ -36,7 +36,7 @@ pub struct CommonOpts {
     pub smc_size: usize,
 
     // Disable specific instructions
-    #[arg(long, default_value = "wfi", value_delimiter = ',')]
+    #[arg(long, default_value = "wfi,lr.w,lr.d", value_delimiter = ',')]
     pub disabled_instrs: Vec<Opcode>,
 }
 

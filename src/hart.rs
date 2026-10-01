@@ -5,7 +5,7 @@ use rand::{Rng, RngExt};
 use crate::basicblock::BasicBlock;
 use crate::orchestrator::GlobalState;
 use crate::riscv::asmutil::load_imm;
-use crate::riscv::{Csr, Extension, FReg, Instruction, XReg, Xlen};
+use crate::riscv::{Csr, Extension, FReg, Instruction, SAFE_CSRS, XReg, Xlen};
 use crate::target::Target;
 use crate::utils::cut_cake_randomly;
 
@@ -149,12 +149,22 @@ impl Hart {
     // }
 }
 
-/// Randomize the architectural register state. FP registers are initialized
-/// first because they go through x5 as scratch; x1-x31 are written last so no
-/// scratch value leaks into the workload. x0 is hardwired to zero.
+/// Randomize the architectural register state. The CSRs the workload may
+/// access and the FP registers are initialized first because they go through
+/// x5 as scratch; x1-x31 are written last so no scratch value leaks into the
+/// workload. x0 is hardwired to zero.
 fn init_registers(rng: &mut (impl Rng + ?Sized), target: &Target) -> Result<Vec<Instruction>> {
     let xlen = target.xlen;
     let mut instrs = Vec::new();
+    // Scratch CSRs are plain XLEN-wide read/write registers, so any value is legal.
+    for &csr in SAFE_CSRS {
+        instrs.extend(load_imm(XReg::X5, random_xlen(rng, xlen), xlen));
+        instrs.push(Instruction::Csrrw {
+            rd: XReg::ZERO,
+            rs1: XReg::X5,
+            csr,
+        });
+    }
     if target.has(Extension::F) {
         // Enable the FPU: set both mstatus.FS bits (Dirty) with CSRRS so the
         // other mstatus fields are preserved.
