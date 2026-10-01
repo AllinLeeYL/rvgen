@@ -1,3 +1,4 @@
+use crate::entangle::{Site, SiteBuilder};
 use crate::orchestrator::GlobalState;
 use crate::memory::Section;
 use crate::riscv::asmutil::{csr_rd_and_addr, with_csr};
@@ -15,6 +16,8 @@ pub struct BasicBlock {
     pub instrs: Vec<Instruction>,
     /// Exported as a function symbol at the block's first instruction.
     pub label: Option<String>,
+    /// Entanglement sites within `instrs`, in program order.
+    pub sites: Vec<Site>,
 }
 
 impl BasicBlock {
@@ -25,14 +28,19 @@ impl BasicBlock {
             budget: budget,
             instrs: Vec::with_capacity(budget),
             label: None,
+            sites: Vec::new(),
         }
     }
 
+    /// Generate the block's workload. With `sites`, memory base addresses are
+    /// derived from workload registers and the block ends with entanglement
+    /// sites checking the registers it wrote (see [`crate::entangle`]).
     pub fn run(
         &mut self,
         rng: &mut (impl Rng + ?Sized),
         target: &Target,
         state: &mut GlobalState,
+        mut sites: Option<&mut SiteBuilder>,
     ) -> Result<()> {
         let candidates: Vec<_> = target
             .workload_opcodes()
@@ -59,9 +67,19 @@ impl BasicBlock {
             if csr_rd_and_addr(&instr).is_some() {
                 instr = with_csr(instr, csrs[rng.random_range(0..csrs.len())]);
             }
-            let setup = confine_memory_access(&instr, &data_sections, xlen, rng)?;
-            self.instrs.extend(setup); // setup instruction might be empty
+            if let Some((base, addr)) = confine_memory_access(&instr, &data_sections, rng)? {
+                match sites.as_deref_mut() {
+                    Some(builder) if base != XReg::ZERO => {
+                        let site = builder.address(&mut self.instrs, base, addr, rng);
+                        self.sites.push(site);
+                    }
+                    _ => self.instrs.extend(load_imm(base, addr as i64, xlen)),
+                }
+            }
             self.instrs.push(instr);
+            if let Some(builder) = sites.as_deref_mut() {
+                builder.observe(&instr);
+            }
 
             // If current instr reads an implementation-dependent CSR into rd,
             // overwrite rd with a random value so the test stays deterministic.
@@ -69,8 +87,27 @@ impl BasicBlock {
                 if rd != XReg::ZERO && csr.is_implementation_dependent() {
                     let fixup = load_imm32(rd, rng.random::<i32>(), xlen);
                     self.instrs.extend_from_slice(&fixup);
+                    if let Some(builder) = sites.as_deref_mut() {
+                        builder.clobber(rd);
+                    }
                 }
             }
+            if let Some(builder) = sites.as_deref_mut() {
+                let guard = builder.after_instr(&mut self.instrs, rng);
+                self.sites.extend(guard);
+            }
+        }
+        if let Some(builder) = sites {
+            let end = builder.block_end(&mut self.instrs, rng);
+            self.sites.extend(end);
+        }
+        Ok(())
+    }
+
+    /// Rewrite every site's instructions for what is currently known.
+    pub fn render_sites(&mut self, xlen: Xlen) -> Result<()> {
+        for site in &self.sites {
+            site.render(&mut self.instrs, xlen)?;
         }
         Ok(())
     }
@@ -85,16 +122,15 @@ impl BasicBlock {
 }
 
 /// Point a memory access at a random aligned address inside one of `sections`
-/// and return the setup that loads the matching base into its address register.
-/// The sampled immediate is kept, so the encoding constraints still hold.
+/// and return its address register with the base value it must hold. The
+/// sampled immediate is kept, so the encoding constraints still hold.
 fn confine_memory_access(
     instr: &Instruction,
     sections: &[&Section],
-    xlen: Xlen,
     rng: &mut (impl Rng + ?Sized),
-) -> Result<Vec<Instruction>> {
+) -> Result<Option<(XReg, u64)>> {
     let Some((base, imm, size)) = memory_operand(instr)? else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
     ensure!(!sections.is_empty(), "no writable section for memory accesses");
     let region = &sections[rng.random_range(0..sections.len())].region;
@@ -106,7 +142,7 @@ fn confine_memory_access(
         region.start
     );
     let addr = rng.random_range(first / size..=last / size) * size;
-    Ok(load_imm(base, addr.wrapping_sub(imm as u64) as i64, xlen))
+    Ok(Some((base, addr.wrapping_sub(imm as u64))))
 }
 
 /// The address register, immediate offset and access width of a memory access.

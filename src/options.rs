@@ -44,6 +44,17 @@ pub struct CommonOpts {
     #[arg(long)]
     pub no_self_check: bool,
 
+    /// Do not entangle memory addresses and control flow with the workload's
+    /// data. Entanglement needs Spike, so `--no-self-check` implies this.
+    #[arg(long)]
+    pub no_entangle: bool,
+
+    /// Also guard mid-block once this many workload-written registers are
+    /// unchecked; 0 guards at block ends only. Lower catches more faults
+    /// before they are overwritten, at the cost of longer programs.
+    #[arg(long, default_value = "8")]
+    pub guard_threshold: usize,
+
     /// Spike executable that computes the self-check's expected values.
     #[arg(long, default_value = "spike")]
     pub spike: String,

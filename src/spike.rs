@@ -44,10 +44,15 @@ impl Spike {
         }
     }
 
-    /// Run hart 0 until it is about to execute `pc` and return its registers.
-    pub fn state_at(&self, elf: &[u8], pc: u64) -> Result<ArchState> {
+    /// Run hart 0 through `pcs`, stopping just before it executes each one,
+    /// and return its registers at every stop. The PCs must be listed in the
+    /// order they are reached. FP registers are reported at the last stop only.
+    pub fn states_at(&self, elf: &[u8], pcs: &[u64]) -> Result<Vec<ArchState>> {
         let elf_file = TempFile::new("elf", elf)?;
-        let mut commands = format!("until pc 0 {pc:#x}\nreg 0\n");
+        let mut commands = String::new();
+        for pc in pcs {
+            commands.push_str(&format!("until pc 0 {pc:#x}\nreg 0\n"));
+        }
         if self.has_fpu {
             for index in 0..32 {
                 commands.push_str(&format!("freg 0 {index}\n"));
@@ -61,12 +66,27 @@ impl Spike {
             format!("--debug-cmd={}", command_file.0.display()),
             elf_file.0.display().to_string(),
         ])?;
-        parse_state(&output, self.has_fpu).with_context(|| {
+        // Each `reg 0` dump starts with `zero:`; FP values follow the last one.
+        let starts: Vec<_> = output.match_indices("zero:").map(|(index, _)| index).collect();
+        let reached = starts.len();
+        let unreached = || {
             format!(
-                "Spike did not reach {pc:#x} (exit code {status}); \
-                 the program likely trapped or exited early. Spike output:\n{output}"
+                "Spike did not reach {:#x} (exit code {status}); \
+                 the program likely trapped or exited early. Spike output:\n{output}",
+                pcs.get(reached).or(pcs.last()).copied().unwrap_or_default()
             )
-        })
+        };
+        ensure!(reached == pcs.len(), unreached());
+        let mut states = Vec::with_capacity(reached);
+        for (index, start) in starts.iter().enumerate() {
+            let last = index + 1 == reached;
+            let end = starts.get(index + 1).copied().unwrap_or(output.len());
+            states.push(
+                parse_state(&output[*start..end], self.has_fpu && last)
+                    .with_context(unreached)?,
+            );
+        }
+        Ok(states)
     }
 
     /// Run to completion and return the HTIF exit code (0 means pass).

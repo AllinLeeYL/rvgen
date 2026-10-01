@@ -1,5 +1,6 @@
 mod basicblock;
 mod elf;
+mod entangle;
 mod hart;
 mod memory;
 mod options;

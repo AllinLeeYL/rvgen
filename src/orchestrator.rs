@@ -22,10 +22,12 @@ pub struct Orchestrator {
     state: GlobalState, // Everything that may change during runtime is defined here.
     rng: StdRng,
     self_check: bool,
+    /// The mid-block guard threshold when entangling.
+    entangle: Option<usize>,
 }
 
 impl Orchestrator {
-    fn new(target: Target, seed: u64, self_check: bool) -> Self {
+    fn new(target: Target, seed: u64, self_check: bool, entangle: Option<usize>) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
         let harts = std::iter::repeat_with(|| Hart::new(target.num_instrs, &mut rng))
             .take(target.num_cores)
@@ -54,12 +56,19 @@ impl Orchestrator {
             state,
             rng,
             self_check,
+            entangle,
         }
     }
 
     fn run(&mut self) -> Result<()> {
         for core in self.harts.iter_mut() {
-            core.run(&mut self.rng, &self.target, &mut self.state, self.self_check)?;
+            core.run(
+                &mut self.rng,
+                &self.target,
+                &mut self.state,
+                self.self_check,
+                self.entangle,
+            )?;
         }
         self.merge_memory_sections();
         Ok(())
@@ -83,16 +92,29 @@ impl Orchestrator {
         Ok((elf.finish()?, text_addr))
     }
 
-    /// Resolve the self-check against Spike: run the placeholder program up to
-    /// the check, patch the observed registers in as expected values, and
+    /// Resolve the self-check against Spike: run the placeholder program
+    /// through every entanglement site up to the check, patch the observed
+    /// registers into the sites and in as the check's expected values, and
     /// confirm the final program passes on Spike. Returns the final image.
     fn resolve_self_check(&mut self, spike: &Spike) -> Result<Vec<u8>> {
-        let (draft, text_addr) = self.encode()?;
+        // Sites need absolute code addresses before the draft can run.
+        let (_, text_addr) = self.encode()?;
+        self.harts[0].link(text_addr, self.target.xlen)?;
+        let (draft, draft_text_addr) = self.encode()?;
+        ensure!(draft_text_addr == text_addr, "code moved while linking sites");
+
         let hart = &mut self.harts[0];
-        let check_pc = text_addr + hart.check_offset()? as u64;
-        let expected = spike
-            .state_at(&draft, check_pc)
+        let mut pcs: Vec<u64> = hart
+            .probe_offsets(self.target.xlen)
+            .into_iter()
+            .map(|offset| text_addr + offset as u64)
+            .collect();
+        pcs.push(text_addr + hart.check_offset()? as u64);
+        let mut states = spike
+            .states_at(&draft, &pcs)
             .context("cannot compute the self-check's expected values")?;
+        let expected = states.pop().expect("the check is probed");
+        hart.resolve_sites(&states, &self.target, &mut self.rng)?;
         hart.set_expected(&expected, &self.target)?;
 
         let (image, final_text_addr) = self.encode()?;
@@ -126,9 +148,10 @@ pub fn gen_one(opts: OneOpts, mkdir: bool) -> Result<()> {
         }
     }
     let self_check = !opts.common.no_self_check;
+    let entangle = (self_check && !opts.common.no_entangle).then_some(opts.common.guard_threshold);
     let spike = Spike::new(&opts.common.spike, &target);
     let mut rng = rand::rng();
-    let mut orchestrator = Orchestrator::new(target, rng.random(), self_check);
+    let mut orchestrator = Orchestrator::new(target, rng.random(), self_check, entangle);
 
     // generate code -- it allocate memory address on the fly
     orchestrator.run()?;

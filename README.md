@@ -41,7 +41,12 @@ Configure a batch of programs:
 - `-o`, `--output`: output file for `one` (default: `rvprog.elf`) or
   output directory for `many` (default: `rvprogs`).
 - `--spike`: Spike executable used for the self-check (default: `spike`).
-- `--no-self-check`: omit the self-check; Spike is then not needed.
+- `--no-self-check`: omit the self-check; Spike is then not needed. Implies
+  `--no-entangle`.
+- `--no-entangle`: omit data/control-flow entanglement (see below).
+- `--guard-threshold`: also place a guard mid-block once this many
+  workload-written registers are unchecked (default: `8`); `0` guards at block
+  ends only.
 
 The orchestrator randomly partitions each core's budget into basic blocks of
 1–32 instructions. Block count is determined automatically, and block budgets
@@ -60,6 +65,7 @@ target:
 | `_stimulus` | the random workload (all basic blocks) |
 | `_check` | the self-check (omitted with `--no-self-check`) |
 | `_exit` | reports the verdict to `tohost` and spins |
+| `_fail` | reports a control-flow divergence to `tohost` and spins (omitted with `--no-entangle`) |
 | `_trap_handler` | reports `mcause + 1` to `tohost` and spins |
 
 ## Self-checking programs
@@ -71,9 +77,10 @@ testbench. Generation runs in two passes:
 1. Generate the program with a `_check` block whose expected values are
    placeholders. The block loads every constant with a fixed-length sequence,
    so its size does not depend on the values.
-2. Run Spike until `_check` and read x1-x31 (and f0-f31 with F).
-3. Patch those values into `_check`. No code moves, so the state reaching
-   `_check` is unchanged.
+2. Run Spike until `_check` and read x1-x31 (and f0-f31 with F), stopping
+   at each entanglement site on the way to read its registers.
+3. Patch those values into the sites and `_check`. No code moves, so the
+   state reaching each of them is unchanged.
 4. Run the final program on Spike and require it to pass.
 
 `_check` XORs each register with its expected value and ORs the differences
@@ -88,10 +95,52 @@ as an HTIF exit code:
 |---|---|
 | 0 | all registers match Spike |
 | 170 (`0xaa`) | at least one register mismatches |
+| 171 (`0xab`) | an entangled branch or jump went the wrong way |
 | `mcause + 1` | the program trapped |
 
 Memory contents are not checked. Only core 0's program is packaged and
-checked. Spike runs with `--isa` derived from `--xlen`/`--isa` and with
+checked.
+
+## Data/control-flow entanglement
+
+The final check only sees values that survive until `_check`, and the workload
+overwrites most of them long before. With entanglement (the default), the
+workload's integer results also steer the program while it runs, after
+[Cascade](https://comsec.ethz.ch/cascade): a core that miscomputes a value
+diverges within a few instructions instead of carrying on silently. Generation
+inserts sites (`src/entangle.rs`) with placeholder constants, and one Spike
+run reports the registers at every site in program order; the constants are
+then patched in place like `_check`'s.
+
+| Site | Code | Catches a wrong value by |
+|---|---|---|
+| address | `rb = K; rb ^= r1; ...; rb ^= rk; ld x, imm(rb)` | accessing a wrong address (often a trap) |
+| branch | `b<cc> r1, r2, +8; jal _fail` (`cc` chosen from Spike's values) | going the wrong way |
+| indirect jump | `rt = K; rt ^= r1; ...; jalr rd, rt; jal _fail` | jumping to a wrong target |
+| guard | `acc = K; acc ^= r1; ...; acc ^= rk; beq/bne acc, x0; jal _fail` | any difference, exactly |
+
+Every memory access gets an address site (replacing the plain base load), and
+every block ends with an optional branch or indirect jump (50%) and a guard.
+`K` is patched to the target XORed with the `ri`'s expected values (0 for a
+guard), and branch opcodes are picked so the planned direction holds. Sites
+use *fresh* registers, those the workload wrote since the last guard: address,
+branch and jump sites peek at the freshest few, and guards consume them all.
+
+Measured with `scripts/inject_faults.py` (flip one workload `add`/`sub`/
+`addi`/`xori`/`ori`, 200 mutants over 50 RV64IM programs of 1000
+instructions), as a share of mutants that actually change a value:
+
+| Configuration | Faults caught | Dynamic instructions |
+|---|---|---|
+| `--no-entangle` | 2% | ~2300 |
+| `--guard-threshold 0` | 71% | ~4900 |
+| `--guard-threshold 8` (default) | 81% | ~5400 |
+| `--guard-threshold 4` | 91% | ~6500 |
+
+Caught faults end the program a median of 14–25 instructions after the fault.
+Faults are missed when the workload overwrites the register before a guard
+reaches it. Writes by compressed instructions and FP registers are not
+tracked by sites; `_check` still covers what survives to the end. Spike runs with `--isa` derived from `--xlen`/`--isa` and with
 `-m<ram-base>:<ram-size>`.
 
 Use `./target/release/rvgen --help`, `one --help`, or `many --help` to inspect the CLI.
@@ -104,8 +153,10 @@ Use `./target/release/rvgen --help`, `one --help`, or `many --help` to inspect t
 - `src/target.rs`: fixed ISA configuration and instruction selection policy.
 - `src/memory.rs`: allocated sections and memory access bounds.
 - `src/elf.rs`: ELF serialization from basic blocks, memory layout, and target.
-- `src/hart.rs`: per-hart init, self-check, exit, and trap-handler code.
-- `src/spike.rs`: Spike runs that compute and verify the self-check's values.
+- `src/hart.rs`: per-hart init, self-check, exit, fail, and trap-handler code.
+- `src/entangle.rs`: data/control-flow entanglement sites.
+- `src/spike.rs`: Spike runs that compute and verify the self-check's and
+  sites' values.
 - `src/riscv/`: instruction representation and encoding.
 - `src/utils.rs`: random budget partitioning.
 

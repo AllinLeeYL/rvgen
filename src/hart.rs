@@ -3,6 +3,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, RngExt};
 
 use crate::basicblock::BasicBlock;
+use crate::entangle::{SiteBuilder, code_size};
 use crate::orchestrator::GlobalState;
 use crate::riscv::asmutil::{load_imm, load_imm_fixed, twos_complement};
 use crate::riscv::{Csr, Extension, FReg, Instruction, SAFE_CSRS, XReg, Xlen};
@@ -15,12 +16,17 @@ pub const INIT_LABEL: &str = "_init";
 pub const STIMULUS_LABEL: &str = "_stimulus";
 pub const CHECK_LABEL: &str = "_check";
 pub const EXIT_LABEL: &str = "_exit";
+pub const FAIL_LABEL: &str = "_fail";
 pub const TRAP_HANDLER_LABEL: &str = "_trap_handler";
 
 /// HTIF exit code reported when the self-check finds a mismatch. It lies above
 /// every `mcause + 1` the trap handler reports for exceptions, and its low byte
 /// is nonzero so it survives truncation to an 8-bit process exit status.
 pub const MISMATCH_EXIT_CODE: i32 = 0xaa;
+
+/// HTIF exit code reported by `_fail`, which an entangled branch or indirect
+/// jump reaches when it goes the wrong way.
+pub const DIVERGENCE_EXIT_CODE: i32 = 0xab;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Privilege {
@@ -93,16 +99,21 @@ impl Hart {
 
     /// Generate the hart's code. With `self_check`, a self-check block holding
     /// placeholder values precedes the exit; patch the reference values in with
-    /// [`Hart::set_expected`] before encoding the final program.
+    /// [`Hart::set_expected`] before encoding the final program. With
+    /// `entangle` (holding the mid-block guard threshold), the workload holds
+    /// entanglement sites; [`Hart::link`] them, then [`Hart::resolve_sites`]
+    /// with Spike's register values.
     pub fn run(
         &mut self,
         rng: &mut (impl Rng + ?Sized),
         target: &Target,
         state: &mut GlobalState,
         self_check: bool,
+        entangle: Option<usize>,
     ) -> Result<()> {
+        let mut sites = entangle.map(|threshold| SiteBuilder::new(target, threshold));
         for bb in self.bbs.iter_mut() {
-            bb.run(rng, target, state)?;
+            bb.run(rng, target, state, sites.as_mut())?;
         }
         let tohost = state.memory.get(".tohost")?.region.start;
 
@@ -112,6 +123,7 @@ impl Hart {
         //   _stimulus      workload
         //   _check         (optional) compare all registers against Spike's values
         //   _exit          report the check's verdict (or success) to tohost and spin
+        //   _fail          (with entanglement) report a divergence to tohost and spin
         //                  (padding to 4 bytes, never executed)
         //   _trap_handler  report mcause to tohost and spin
         // mtvec is set first so a trap anywhere after it terminates the test.
@@ -141,11 +153,25 @@ impl Hart {
             }
         };
         let exit = report_to_tohost(verdict, tohost, target.xlen);
+        let fail = if entangle.is_some() {
+            report_to_tohost(
+                Instruction::Addi {
+                    rd: XReg::X5,
+                    rs1: XReg::ZERO,
+                    imm: DIVERGENCE_EXIT_CODE << 1,
+                },
+                tohost,
+                target.xlen,
+            )
+        } else {
+            Vec::new()
+        };
         let before_handler = code_size(&set_mtvec(0))
             + code_size(&init)
             + self.bbs.iter().map(|bb| code_size(&bb.instrs)).sum::<usize>()
             + code_size(&check)
-            + code_size(&exit);
+            + code_size(&exit)
+            + code_size(&fail);
         let mut padding = Vec::new();
         if before_handler % 4 != 0 {
             // Only reachable with C enabled; never executed.
@@ -180,6 +206,13 @@ impl Hart {
             label: Some(EXIT_LABEL.into()),
             ..Default::default()
         });
+        if entangle.is_some() {
+            self.bbs.push(BasicBlock {
+                instrs: fail,
+                label: Some(FAIL_LABEL.into()),
+                ..Default::default()
+            });
+        }
         self.bbs.push(BasicBlock {
             instrs: padding,
             ..Default::default()
@@ -195,7 +228,76 @@ impl Hart {
     /// Byte offset of the self-check block from the hart's first instruction.
     pub fn check_offset(&self) -> Result<usize> {
         let index = self.check_index()?;
-        Ok(self.bbs[..index].iter().map(|bb| code_size(&bb.instrs)).sum())
+        Ok(self.block_offset(index))
+    }
+
+    /// Fix the entanglement sites' code addresses, given that the hart's code
+    /// starts at `text_addr`, and render their placeholders.
+    pub fn link(&mut self, text_addr: u64, xlen: Xlen) -> Result<()> {
+        let Some(fail) = self.label_index(FAIL_LABEL) else {
+            return Ok(());
+        };
+        let fail_addr = text_addr + self.block_offset(fail) as u64;
+        let mut block_addr = text_addr;
+        for bb in self.bbs.iter_mut() {
+            for site in bb.sites.iter_mut() {
+                site.link(&mut bb.instrs, block_addr, fail_addr)?;
+            }
+            bb.render_sites(xlen)?;
+            block_addr += code_size(&bb.instrs) as u64;
+        }
+        Ok(())
+    }
+
+    /// Byte offsets, from the hart's first instruction, at which Spike must
+    /// report the registers of each entanglement site, in program order. The
+    /// workload is executed once, front to back, so this is also the order in
+    /// which they are reached.
+    pub fn probe_offsets(&self, xlen: Xlen) -> Vec<usize> {
+        let mut offsets = Vec::new();
+        let mut block_offset = 0;
+        for bb in &self.bbs {
+            for site in &bb.sites {
+                if let Some(index) = site.probe_index(xlen) {
+                    offsets.push(block_offset + code_size(&bb.instrs[..index]));
+                }
+            }
+            block_offset += code_size(&bb.instrs);
+        }
+        offsets
+    }
+
+    /// Patch Spike's register values, one per site in [`Hart::probe_offsets`]
+    /// order, into the entanglement sites. Sites keep their sizes.
+    pub fn resolve_sites(
+        &mut self,
+        states: &[ArchState],
+        target: &Target,
+        rng: &mut (impl Rng + ?Sized),
+    ) -> Result<()> {
+        let mut states = states.iter();
+        for bb in self.bbs.iter_mut() {
+            for site in bb.sites.iter_mut() {
+                if site.probe_index(target.xlen).is_none() {
+                    continue;
+                }
+                let state = states
+                    .next()
+                    .ok_or_else(|| anyhow!("missing register values for a site"))?;
+                site.resolve(&state.xregs, target, rng)?;
+            }
+            bb.render_sites(target.xlen)?;
+        }
+        ensure!(states.next().is_none(), "more register values than sites");
+        Ok(())
+    }
+
+    fn block_offset(&self, index: usize) -> usize {
+        self.bbs[..index].iter().map(|bb| code_size(&bb.instrs)).sum()
+    }
+
+    fn label_index(&self, label: &str) -> Option<usize> {
+        self.bbs.iter().position(|bb| bb.label.as_deref() == Some(label))
     }
 
     /// Replace the self-check's placeholder values with `expected`. The block
@@ -213,9 +315,7 @@ impl Hart {
     }
 
     fn check_index(&self) -> Result<usize> {
-        self.bbs
-            .iter()
-            .position(|bb| bb.label.as_deref() == Some(CHECK_LABEL))
+        self.label_index(CHECK_LABEL)
             .ok_or_else(|| anyhow!("hart has no self-check block"))
     }
 
@@ -366,10 +466,6 @@ fn self_check_block(expected: &ArchState, target: &Target) -> Result<Vec<Instruc
         imm: MISMATCH_EXIT_CODE,
     });
     Ok(instrs)
-}
-
-fn code_size(instrs: &[Instruction]) -> usize {
-    instrs.iter().map(Instruction::byte_len).sum()
 }
 
 /// Point mtvec (direct mode) at `offset` bytes from the first instruction of
