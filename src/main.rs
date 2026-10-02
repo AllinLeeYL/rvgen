@@ -2,6 +2,7 @@ mod basicblock;
 mod elf;
 mod entangle;
 mod hart;
+mod membase;
 mod memory;
 mod options;
 mod orchestrator;

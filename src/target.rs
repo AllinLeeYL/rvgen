@@ -18,6 +18,8 @@ pub struct Target {
     pub num_cores: usize,
     pub num_instrs: usize,
     pub physical_memory: MemoryRegion,
+    pub scratch_size: u64,
+    pub smc_size: u64,
 }
 
 impl Target {
@@ -30,6 +32,8 @@ impl Target {
         num_cores: usize,
         num_instrs: usize,
         physical_memory: MemoryRegion,
+        scratch_size: u64,
+        smc_size: u64,
     ) -> Result<Self> {
         let mut extensions: HashSet<_> = extensions.into_iter().collect();
         ensure!(
@@ -65,6 +69,8 @@ impl Target {
             num_cores,
             num_instrs,
             physical_memory,
+            scratch_size,
+            smc_size
         })
     }
 

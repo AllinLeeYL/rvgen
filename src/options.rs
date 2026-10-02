@@ -32,12 +32,12 @@ pub struct CommonOpts {
     pub ram_size: u64,
 
     // Writable memory reserved for generated loads, stores, and atomics.
-    #[arg(long, default_value = "4096")]
-    pub scratch_size: usize,
+    #[arg(long, default_value = "8192")]
+    pub scratch_size: u64,
 
     // Writable/executable SMC section size in bytes; zero omits the section.
-    #[arg(long, default_value = "4096")]
-    pub smc_size: usize,
+    #[arg(long, default_value = "8192")]
+    pub smc_size: u64,
 
     // Disable specific instructions
     #[arg(long, default_value = "wfi,lr.w,lr.d", value_delimiter = ',')]

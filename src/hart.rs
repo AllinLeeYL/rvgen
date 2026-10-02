@@ -4,6 +4,7 @@ use rand::{Rng, RngExt};
 
 use crate::basicblock::BasicBlock;
 use crate::entangle::{SiteBuilder, code_size};
+use crate::membase::MemBases;
 use crate::orchestrator::GlobalState;
 use crate::riscv::asmutil::{load_imm, load_imm_fixed, twos_complement};
 use crate::riscv::{Csr, Extension, FReg, Instruction, PrivilegeLevel, XReg, Xlen};
@@ -46,6 +47,9 @@ pub struct HartState {
 
     pub medeleg: u64,
     pub mideleg: u64,
+
+    /// Registers reserved to address memory, fixed for the whole program.
+    pub mem_bases: MemBases,
 }
 
 impl Default for HartState {
@@ -63,6 +67,8 @@ impl Default for HartState {
 
             medeleg: 0,
             mideleg: 0,
+
+            mem_bases: MemBases::default(),
         }
     }
 }
@@ -105,15 +111,19 @@ impl Hart {
         self_check: bool,
         entangle: Option<usize>,
     ) -> Result<()> {
-        let mut sites = entangle.map(|threshold| SiteBuilder::new(target, threshold));
+        let sections: Vec<_> = state.memory.data_sections().collect();
+        self.state.mem_bases = MemBases::pick(&sections, rng)?;
+        let reserved: Vec<_> = self.state.mem_bases.bases.iter().map(|base| base.reg).collect();
+        let mut sites =
+            entangle.map(|threshold| SiteBuilder::new(target, threshold, reserved.clone()));
         for bb in self.bbs.iter_mut() {
-            bb.run(rng, target, state, sites.as_mut())?;
+            bb.run(rng, target, state, & mut self.state, sites.as_mut())?;
         }
         let tohost = state.memory.get(".tohost")?.region.start;
 
         // Layout of the hart's code and the symbol marking each part:
         //   _start         point mtvec at the handler (entry point)
-        //   _init          randomize registers
+        //   _init          randomize registers, then set the memory bases
         //   _stimulus      workload
         //   _check         (optional) compare all registers against Spike's values
         //   _exit          report the check's verdict (or success) to tohost and spin
@@ -123,7 +133,11 @@ impl Hart {
         // mtvec is set first so a trap anywhere after it terminates the test.
         // `_start` is exported by the ELF encoder for the whole code, so the
         // mtvec block carries no label of its own.
-        let init = init_registers(rng, target)?;
+        let mut init = init_registers(rng, target)?;
+        // The bases overwrite their random values; nothing writes them again.
+        for base in &self.state.mem_bases.bases {
+            init.extend(load_imm(base.reg, base.addr as i64, target.xlen));
+        }
         if let Some(first) = self.bbs.first_mut() {
             first.label = Some(STIMULUS_LABEL.into());
         }

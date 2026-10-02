@@ -47,8 +47,8 @@ impl Orchestrator {
                 section.private = true;
             }
         }
-        let _ = state.memory.reserve(&target.physical_memory, "scratch", 4096, 4, Permissions::RW);
-        let _ = state.memory.reserve(&target.physical_memory, "smc", 4096, 4, Permissions::RWX);
+        let _ = state.memory.reserve(&target.physical_memory, "scratch", target.scratch_size, 4, Permissions::RW);
+        let _ = state.memory.reserve(&target.physical_memory, "smc", target.smc_size, 4, Permissions::RWX);
 
         Self {
             target,
@@ -142,6 +142,8 @@ pub fn gen_one(opts: OneOpts, mkdir: bool) -> Result<()> {
         opts.common.num_cores,
         opts.common.num_instrs,
         ram.clone(),
+        opts.common.scratch_size,
+        opts.common.smc_size,
     )?;
     if mkdir {
         if let Some(parent) = Path::new(&opts.output).parent() {

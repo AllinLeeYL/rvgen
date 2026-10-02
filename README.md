@@ -38,7 +38,7 @@ Configure a batch of programs:
 - `--isa`: comma-separated extensions (default: `i,zicsr`); Zicsr is required for the trap handler, and D implies F.
 - `--priv`: comma-separated privilege modes `m`, `s`, `u` (default: `m,s,u`); M is required and S requires U. Without S, no S-mode CSR such as `sscratch` is accessed.
 - `--ram-base`, `--ram-size`: allocation bounds (default: `0x80000000`, `0x08000000`).
-- `--scratch-size`, `--smc-size`: section sizes in bytes (default: `4096` each); zero SMC size omits it.
+- `--scratch-size`, `--smc-size`: section sizes in bytes (default: `8192` each); zero SMC size omits it.
 - `-o`, `--output`: output file for `one` (default: `rvprog.elf`) or
   output directory for `many` (default: `rvprogs`).
 - `--spike`: Spike executable used for the self-check (default: `spike`).
@@ -62,12 +62,32 @@ target:
 | Symbol | Contents |
 |---|---|
 | `_start` | entry point; points `mtvec` at `_trap_handler` |
-| `_init` | randomizes CSRs, FP registers, then x1-x31 |
+| `_init` | randomizes CSRs, FP registers, then x1-x31, then sets the memory base registers |
 | `_stimulus` | the random workload (all basic blocks) |
 | `_check` | the self-check (omitted with `--no-self-check`) |
 | `_exit` | reports the verdict to `tohost` and spins |
 | `_fail` | reports a control-flow divergence to `tohost` and spins (omitted with `--no-entangle`) |
 | `_trap_handler` | reports `mcause + 1` to `tohost` and spins |
+
+## Memory accesses
+
+Each program reserves 3–5 registers, drawn from `gp`, `tp` and `s2`–`s11`, as
+memory bases (`src/membase.rs`). `_init` points each one at a random
+doubleword in a data section (`scratch`), and nothing writes them afterwards:
+the workload never samples them as a destination, and generator code avoids
+them. Every memory access reaches a random aligned address in the section
+through one of the bases:
+
+| Access | Code |
+|---|---|
+| 12-bit immediate (`lb`…`sd`, `flw`…`fsd`) | the access, rewritten to `imm(base)` |
+| short or no immediate (compressed, `*sp`, AMO) | `addi rs1, base, off`; the access |
+| data-dependent | `andi rs1, r, 0x7f8`; `add rs1, rs1, base`; the access |
+
+A data-dependent access mixes in the most recently written workload register
+`r`, masked so the address stays in the section whatever `r` holds. Each
+program draws its share of data-dependent accesses (among those with a 12-bit
+immediate) uniformly from 0–10%.
 
 ## Self-checking programs
 
@@ -115,30 +135,33 @@ then patched in place like `_check`'s.
 
 | Site | Code | Catches a wrong value by |
 |---|---|---|
-| address | `rb = K; rb ^= r1; ...; rb ^= rk; ld x, imm(rb)` | accessing a wrong address (often a trap) |
 | branch | `b<cc> r1, r2, +8; jal _fail` (`cc` chosen from Spike's values) | going the wrong way |
 | indirect jump | `rt = K; rt ^= r1; ...; jalr rd, rt; jal _fail` | jumping to a wrong target |
 | guard | `acc = K; acc ^= r1; ...; acc ^= rk; beq/bne acc, x0; jal _fail` | any difference, exactly |
 
-Every memory access gets an address site (replacing the plain base load), and
-every block ends with an optional branch or indirect jump (50%) and a guard.
+Every block ends with an optional branch or indirect jump (50%) and a guard.
 `K` is patched to the target XORed with the `ri`'s expected values (0 for a
 guard), and branch opcodes are picked so the planned direction holds. Sites
-use *fresh* registers, those the workload wrote since the last guard: address,
-branch and jump sites peek at the freshest few, and guards consume them all.
+use *fresh* registers, those the workload wrote since the last guard: branch
+and jump sites peek at the freshest few, and guards consume them all. Memory
+accesses are not sites (see [Memory accesses](#memory-accesses)); a
+data-dependent address is fresh, so the next guard checks it.
 
-Measured with `scripts/inject_faults.py` (flip one workload `add`/`sub`/
-`addi`/`xori`/`ori`, 200 mutants over 50 RV64IM programs of 1000
+Measured with `scripts/inject_faults.py` (flip one `add`/`sub`/`addi`/`xori`/
+`ori` in `_stimulus`, 200 mutants over 50 RV64IM programs of 1000
 instructions), as a share of mutants that actually change a value:
 
 | Configuration | Faults caught | Dynamic instructions |
 |---|---|---|
-| `--no-entangle` | 2% | ~2300 |
-| `--guard-threshold 0` | 71% | ~4900 |
-| `--guard-threshold 8` (default) | 81% | ~5400 |
-| `--guard-threshold 4` | 91% | ~6500 |
+| `--no-entangle` | 17% | ~1600 |
+| `--guard-threshold 0` | 65% | ~2900 |
+| `--guard-threshold 8` (default) | 82% | ~3600 |
+| `--guard-threshold 4` | 91% | ~4800 |
 
-Caught faults end the program a median of 14–25 instructions after the fault.
+The mutated instruction may be a base `addi` in front of an access; those
+mutants trap at once and account for most of the catches without
+entanglement. Faults caught by a site end the program a median of 15–28
+instructions after the fault.
 Faults are missed when the workload overwrites the register before a guard
 reaches it. Writes by compressed instructions and FP registers are not
 tracked by sites; `_check` still covers what survives to the end. Spike runs with `--isa` derived from `--xlen`/`--isa`, `--priv` from `--priv`, and with
@@ -156,6 +179,7 @@ Use `./target/release/rvgen --help`, `one --help`, or `many --help` to inspect t
 - `src/elf.rs`: ELF serialization from basic blocks, memory layout, and target.
 - `src/hart.rs`: per-hart init, self-check, exit, fail, and trap-handler code.
 - `src/entangle.rs`: data/control-flow entanglement sites.
+- `src/membase.rs`: reserved memory base registers and access placement.
 - `src/spike.rs`: Spike runs that compute and verify the self-check's and
   sites' values.
 - `src/riscv/`: instruction representation and encoding.
@@ -168,6 +192,6 @@ and RNG. The CLI reserves 8-byte `.tohost` and `.fromhost` sections aligned to
 alignment, and permissions. Other supplied sections are zero-filled. The ELF
 encoder exports `tohost` and `fromhost` symbols for their supplied sections.
 
-Startup, register initialization (including the scratch base in `gp`), trap
+Startup, register initialization (including the memory base registers), trap
 handling, and termination must be supplied as instructions by generation. The
 ELF encoder adds no code and requires no scratch or HTIF sections.

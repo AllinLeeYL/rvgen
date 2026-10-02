@@ -7,18 +7,20 @@
 //! - A *value* site builds a register as `r = K; r ^= dep_1; ...; r ^= dep_k`,
 //!   where the `dep_i` hold workload data and `K` is patched to
 //!   `dest ^ dep_1 ^ ... ^ dep_k` once Spike tells us their values. It serves
-//!   as a memory base address, an indirect jump target, or (with `dest = 0`)
-//!   the accumulator of a guard.
+//!   as an indirect jump target, or (with `dest = 0`) the accumulator of a
+//!   guard.
 //! - A *branch* site compares two workload registers. Its opcode is picked
 //!   once Spike tells us their values, so the planned direction is the right
 //!   one; the wrong direction lands on a jump to `_fail`.
 //! - A *guard* tests a value site's accumulator against zero with `beq`/`bne`.
-//!   Unlike the others, which only notice faults that move an address or a
+//!   Unlike the others, which only notice faults that move a jump target or a
 //!   comparison far enough, it notices any wrong value among its `dep_i`.
 //!
-//! Address, branch, and jump sites only peek at workload registers; guards
-//! consume them, so every register the workload writes is checked by the next
-//! guard unless the workload overwrites it first.
+//! Branch and jump sites only peek at workload registers; guards consume
+//! them, so every register the workload writes is checked by the next guard
+//! unless the workload overwrites it first. Memory accesses are not sites:
+//! they go through reserved base registers (see [`crate::membase`]), which
+//! site code never writes.
 //!
 //! Sites have fixed sizes, so patching moves no code. Before patching, a site
 //! renders a placeholder that follows the planned path without depending on
@@ -39,7 +41,7 @@ const BRANCH_PAIRS: [(Opcode, Opcode); 3] = [
     (Opcode::Bltu, Opcode::Bgeu),
 ];
 
-/// Most workload registers an address or jump target is entangled with.
+/// Most workload registers a jump target is entangled with.
 const MAX_PEEK: usize = 4;
 
 /// Probability that a block ends with a branch or indirect jump before its
@@ -53,7 +55,7 @@ const JALR_PROBA: f64 = 0.3;
 /// Where a value site's register must end up pointing.
 #[derive(Debug, Clone, Copy)]
 pub enum Dest {
-    /// An absolute value: a data address, or 0 for a guard.
+    /// An absolute value: 0 for a guard.
     Data(u64),
     /// The instruction at this index of the same block (possibly one past the
     /// end, i.e. the next block). Resolved to an address by [`Site::link`].
@@ -234,15 +236,23 @@ pub struct SiteBuilder<'a> {
     /// (never if 0), so fewer faulty values are overwritten before a guard
     /// sees them. Lower catches more faults but adds more generator code.
     guard_threshold: usize,
+    /// Registers site code must never write or read (the memory bases).
+    reserved: Vec<XReg>,
 }
 
 impl<'a> SiteBuilder<'a> {
-    pub fn new(target: &'a Target, guard_threshold: usize) -> Self {
+    pub fn new(target: &'a Target, guard_threshold: usize, reserved: Vec<XReg>) -> Self {
         Self {
             target,
             fresh: Vec::new(),
             guard_threshold,
+            reserved,
         }
+    }
+
+    /// The register the workload wrote most recently, if still unchecked.
+    pub fn freshest(&self) -> Option<XReg> {
+        self.fresh.last().copied()
     }
 
     /// Record that the workload instruction `instr` was appended.
@@ -257,20 +267,6 @@ impl<'a> SiteBuilder<'a> {
     /// no longer carries workload data.
     pub fn clobber(&mut self, reg: XReg) {
         self.fresh.retain(|r| *r != reg);
-    }
-
-    /// Make `rprod` hold `addr` through an entangled sequence appended to
-    /// `instrs`.
-    pub fn address(
-        &mut self,
-        instrs: &mut Vec<Instruction>,
-        rprod: XReg,
-        addr: u64,
-        rng: &mut (impl Rng + ?Sized),
-    ) -> Site {
-        let rdeps = self.peek(rng, MAX_PEEK, rprod);
-        self.clobber(rprod);
-        self.value_site(instrs, rprod, rdeps, Dest::Data(addr))
     }
 
     /// After a workload instruction: a guard if enough registers are fresh.
@@ -324,7 +320,7 @@ impl<'a> SiteBuilder<'a> {
         let rs1 = operands[0];
         let rs2 = match operands.get(1) {
             Some(reg) => *reg,
-            None => random_reg_except(rng, rs1),
+            None => self.random_reg_except(rng, rs1),
         };
         let taken = rng.random_bool(0.5);
         vec![branch_site(instrs, Kind::Branch { rs1, rs2, taken, opcode: None }, taken)]
@@ -371,23 +367,34 @@ impl<'a> SiteBuilder<'a> {
             .take(max)
             .collect();
         if regs.is_empty() {
-            vec![random_reg_except(rng, except)]
+            vec![self.random_reg_except(rng, except)]
         } else {
             regs
         }
     }
 
-    /// A random nonzero register holding no unchecked workload value, for
-    /// generator code to overwrite; any nonzero register if all are fresh.
+    /// A random nonzero, unreserved register holding no unchecked workload
+    /// value, for generator code to overwrite; any unreserved one if all are
+    /// fresh.
     fn stale(&self, rng: &mut (impl Rng + ?Sized)) -> XReg {
         let stale: Vec<_> = (1..32)
             .map(|i| XReg::new(i).expect("valid register"))
-            .filter(|reg| !self.fresh.contains(reg))
+            .filter(|reg| !self.fresh.contains(reg) && !self.reserved.contains(reg))
             .collect();
         if stale.is_empty() {
-            random_reg_except(rng, XReg::ZERO)
+            self.random_reg_except(rng, XReg::ZERO)
         } else {
             stale[rng.random_range(0..stale.len())]
+        }
+    }
+
+    /// A random nonzero, unreserved register other than `except`.
+    fn random_reg_except(&self, rng: &mut (impl Rng + ?Sized), except: XReg) -> XReg {
+        loop {
+            let reg = XReg::new(rng.random_range(1..32)).expect("valid register");
+            if reg != except && !self.reserved.contains(&reg) {
+                return reg;
+            }
         }
     }
 
@@ -430,7 +437,7 @@ fn enabled_branch_opcodes(target: &Target) -> impl Iterator<Item = Opcode> + '_ 
 
 /// The integer register `instr` writes, if any. Decoded from the standard
 /// encoding; compressed instructions are not tracked.
-fn written_xreg(instr: &Instruction) -> Option<XReg> {
+pub fn written_xreg(instr: &Instruction) -> Option<XReg> {
     let Ok(EncodedInstruction::Standard(bits)) = instr.encode() else {
         return None;
     };
@@ -446,16 +453,6 @@ fn written_xreg(instr: &Instruction) -> Option<XReg> {
     };
     let rd = XReg::new(((bits >> 7) & 31) as u8).ok()?;
     (writes && rd != XReg::ZERO).then_some(rd)
-}
-
-/// A random nonzero register other than `except`.
-fn random_reg_except(rng: &mut (impl Rng + ?Sized), except: XReg) -> XReg {
-    loop {
-        let reg = XReg::new(rng.random_range(1..32)).expect("valid register");
-        if reg != except {
-            return reg;
-        }
-    }
 }
 
 fn branch_taken(opcode: Opcode, a: u64, b: u64, xlen: Xlen) -> bool {

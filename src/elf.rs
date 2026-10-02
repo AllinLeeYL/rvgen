@@ -619,6 +619,8 @@ mod tests {
                 size: 0x10000,
                 permissions: Permissions::RWX,
             },
+            8192,
+            8192,
         )
         .unwrap()
     }
