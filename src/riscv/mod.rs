@@ -19,6 +19,7 @@ pub mod registers;
 pub mod rvwmo;
 
 pub use operand::SAFE_CSRS;
+pub use registers::PrivilegeLevel;
 pub use fields::{Csr, FReg, FenceOrdering, OperandError, Ordering, RoundingMode, XReg, Xlen};
 pub use instruction::{
     EncodeError, EncodedInstruction, Extension, Instruction, InstructionClass, Opcode,

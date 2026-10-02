@@ -600,7 +600,7 @@ fn serialize(sections: &[ElfSection], is_64bit: bool, start: u64) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::riscv::{Extension, Instruction};
+    use crate::riscv::{Extension, Instruction, PrivilegeLevel};
 
     fn target(xlen: Xlen, compressed: bool) -> Target {
         let mut extensions = vec![Extension::I, Extension::Zicsr];
@@ -610,6 +610,7 @@ mod tests {
         Target::new(
             xlen,
             extensions,
+            [PrivilegeLevel::Machine, PrivilegeLevel::Supervisor, PrivilegeLevel::User],
             HashSet::new(),
             1,
             2,

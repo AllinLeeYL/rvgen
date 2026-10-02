@@ -6,7 +6,7 @@ use crate::basicblock::BasicBlock;
 use crate::entangle::{SiteBuilder, code_size};
 use crate::orchestrator::GlobalState;
 use crate::riscv::asmutil::{load_imm, load_imm_fixed, twos_complement};
-use crate::riscv::{Csr, Extension, FReg, Instruction, SAFE_CSRS, XReg, Xlen};
+use crate::riscv::{Csr, Extension, FReg, Instruction, PrivilegeLevel, XReg, Xlen};
 use crate::spike::ArchState;
 use crate::target::Target;
 use crate::utils::cut_cake_randomly;
@@ -28,19 +28,13 @@ pub const MISMATCH_EXIT_CODE: i32 = 0xaa;
 /// jump reaches when it goes the wrong way.
 pub const DIVERGENCE_EXIT_CODE: i32 = 0xab;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Privilege {
-    User,
-    Supervisor,
-    Machine,
-}
 #[derive(Debug, Clone)]
 pub struct HartState {
-    pub privilege: Privilege,
+    pub privilege: PrivilegeLevel,
 
     // mstatus state revelant to privilege transitions
-    pub mpp: Privilege,
-    pub spp: Privilege,
+    pub mpp: PrivilegeLevel,
+    pub spp: PrivilegeLevel,
 
     // whether these CSR currently contain valid continuation address
     pub mepc_valid: bool,
@@ -57,9 +51,9 @@ pub struct HartState {
 impl Default for HartState {
     fn default() -> Self {
         Self {
-            privilege: Privilege::Machine,
-            mpp: Privilege::Machine,
-            spp: Privilege::User,
+            privilege: PrivilegeLevel::Machine,
+            mpp: PrivilegeLevel::Machine,
+            spp: PrivilegeLevel::User,
 
             mepc_valid: false,
             sepc_valid: false,
@@ -336,7 +330,7 @@ fn init_registers(rng: &mut (impl Rng + ?Sized), target: &Target) -> Result<Vec<
     let xlen = target.xlen;
     let mut instrs = Vec::new();
     // Scratch CSRs are plain XLEN-wide read/write registers, so any value is legal.
-    for &csr in SAFE_CSRS {
+    for csr in target.scratch_csrs() {
         instrs.extend(load_imm(XReg::X5, random_xlen(rng, xlen), xlen));
         instrs.push(Instruction::Csrrw {
             rd: XReg::ZERO,

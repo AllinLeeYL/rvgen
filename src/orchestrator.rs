@@ -137,6 +137,7 @@ pub fn gen_one(opts: OneOpts, mkdir: bool) -> Result<()> {
     let target = Target::new(
         opts.common.xlen,
         opts.common.isa.iter().copied(),
+        opts.common.privileges.iter().copied(),
         opts.common.disabled_instrs.iter().copied().collect(),
         opts.common.num_cores,
         opts.common.num_instrs,

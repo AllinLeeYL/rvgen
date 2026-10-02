@@ -512,6 +512,17 @@ pub enum PrivilegeLevel {
     Supervisor = 1,
     Machine = 3,
 }
+impl std::str::FromStr for PrivilegeLevel {
+    type Err = String;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "u" => Ok(Self::User),
+            "s" => Ok(Self::Supervisor),
+            "m" => Ok(Self::Machine),
+            _ => Err(format!("unknown privilege mode `{value}` (expected m, s, or u)")),
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum FpuState {

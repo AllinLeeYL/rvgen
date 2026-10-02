@@ -1,4 +1,4 @@
-use crate::riscv::{Extension, Opcode, Xlen};
+use crate::riscv::{Extension, Opcode, PrivilegeLevel, Xlen};
 use clap::Args;
 
 #[derive(Args, Clone)]
@@ -15,23 +15,27 @@ pub struct CommonOpts {
     #[arg(long, default_value = "i,zicsr", value_delimiter = ',')]
     pub isa: Vec<Extension>,
 
-    /// Target register width (32 or 64).
+    // Target register width (32 or 64).
     #[arg(long, default_value = "64", value_parser = parse_xlen)]
     pub xlen: Xlen,
 
-    /// Physical RAM base; decimal or hexadecimal. Also the ELF entry address.
+    // Target privilege modes (m, s, u); M is required and S requires U.
+    #[arg(long = "priv", default_value = "m,s,u", value_delimiter = ',')]
+    pub privileges: Vec<PrivilegeLevel>,
+
+    // Physical RAM base; decimal or hexadecimal. Also the ELF entry address.
     #[arg(long, default_value = "0x80000000", value_parser = parse_address)]
     pub ram_base: u64,
 
-    /// Physical RAM size in bytes; must match the simulator/board configuration.
+    // Physical RAM size in bytes; must match the simulator/board configuration.
     #[arg(long, default_value = "0x08000000", value_parser = parse_address)]
     pub ram_size: u64,
 
-    /// Writable memory reserved for generated loads, stores, and atomics.
+    // Writable memory reserved for generated loads, stores, and atomics.
     #[arg(long, default_value = "4096")]
     pub scratch_size: usize,
 
-    /// Writable/executable SMC section size in bytes; zero omits the section.
+    // Writable/executable SMC section size in bytes; zero omits the section.
     #[arg(long, default_value = "4096")]
     pub smc_size: usize,
 

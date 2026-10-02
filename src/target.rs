@@ -6,13 +6,14 @@ use anyhow::{Result, ensure};
 
 use crate::{
     memory::MemoryRegion,
-    riscv::{Csr, Extension, Instruction, Opcode, SAFE_CSRS, Xlen},
+    riscv::{Csr, Extension, Instruction, Opcode, PrivilegeLevel, SAFE_CSRS, Xlen},
 };
 
 #[derive(Debug, Clone)]
 pub struct Target {
     pub xlen: Xlen,
     pub extensions: HashSet<Extension>,
+    pub privileges: HashSet<PrivilegeLevel>,
     pub disabled_opcodes: HashSet<Opcode>,
     pub num_cores: usize,
     pub num_instrs: usize,
@@ -24,6 +25,7 @@ impl Target {
     pub fn new(
         xlen: Xlen,
         extensions: impl IntoIterator<Item = Extension>,
+        privileges: impl IntoIterator<Item = PrivilegeLevel>,
         disabled_opcodes: HashSet<Opcode>,
         num_cores: usize,
         num_instrs: usize,
@@ -45,9 +47,20 @@ impl Target {
         if extensions.contains(&Extension::D) {
             extensions.insert(Extension::F);
         }
+        let privileges: HashSet<_> = privileges.into_iter().collect();
+        ensure!(
+            privileges.contains(&PrivilegeLevel::Machine),
+            "the target requires M-mode"
+        );
+        ensure!(
+            !privileges.contains(&PrivilegeLevel::Supervisor)
+                || privileges.contains(&PrivilegeLevel::User),
+            "S-mode requires U-mode"
+        );
         Ok(Self {
             xlen,
             extensions,
+            privileges,
             disabled_opcodes,
             num_cores,
             num_instrs,
@@ -57,6 +70,10 @@ impl Target {
 
     pub fn has(&self, extension: Extension) -> bool {
         self.extensions.contains(&extension)
+    }
+
+    pub fn has_privilege(&self, privilege: PrivilegeLevel) -> bool {
+        self.privileges.contains(&privilege)
     }
 
     pub fn supports(&self, opcode: Opcode) -> bool {
@@ -70,10 +87,20 @@ impl Target {
             .filter(|opcode| self.supports(*opcode) && !self.disabled_opcodes.contains(opcode))
     }
 
-    /// CSRs the workload may access: the always-safe set plus those whose
+    /// Plain XLEN-wide read/write scratch CSRs present on this target:
+    /// mscratch always, sscratch only with S-mode.
+    pub fn scratch_csrs(&self) -> Vec<Csr> {
+        let mut csrs = SAFE_CSRS.to_vec();
+        if self.has_privilege(PrivilegeLevel::Supervisor) {
+            csrs.push(Csr::SSCRATCH);
+        }
+        csrs
+    }
+
+    /// CSRs the workload may access: the scratch CSRs plus those whose
     /// extension is enabled, so no CSR access traps as illegal.
     pub fn workload_csrs(&self) -> Vec<Csr> {
-        let mut csrs = SAFE_CSRS.to_vec();
+        let mut csrs = self.scratch_csrs();
         if self.has(Extension::F) {
             csrs.push(Csr::FFLAGS);
         }
@@ -105,6 +132,19 @@ impl Target {
             }
         }
         isa
+    }
+
+    /// Privilege modes for Spike's `--priv`: `m`, `mu`, or `msu`.
+    pub fn spike_priv(&self) -> String {
+        [
+            (PrivilegeLevel::Machine, 'm'),
+            (PrivilegeLevel::Supervisor, 's'),
+            (PrivilegeLevel::User, 'u'),
+        ]
+        .into_iter()
+        .filter(|(privilege, _)| self.has_privilege(*privilege))
+        .map(|(_, letter)| letter)
+        .collect()
     }
 
     pub fn instruction_alignment(&self) -> usize {

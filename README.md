@@ -36,6 +36,7 @@ Configure a batch of programs:
 - `--num-elfs`: programs in a batch, for `many` only (default: `100`).
 - `--xlen`: target register width, `32` or `64` (default: `64`).
 - `--isa`: comma-separated extensions (default: `i,zicsr`); Zicsr is required for the trap handler, and D implies F.
+- `--priv`: comma-separated privilege modes `m`, `s`, `u` (default: `m,s,u`); M is required and S requires U. Without S, no S-mode CSR such as `sscratch` is accessed.
 - `--ram-base`, `--ram-size`: allocation bounds (default: `0x80000000`, `0x08000000`).
 - `--scratch-size`, `--smc-size`: section sizes in bytes (default: `4096` each); zero SMC size omits it.
 - `-o`, `--output`: output file for `one` (default: `rvprog.elf`) or
@@ -140,7 +141,7 @@ instructions), as a share of mutants that actually change a value:
 Caught faults end the program a median of 14–25 instructions after the fault.
 Faults are missed when the workload overwrites the register before a guard
 reaches it. Writes by compressed instructions and FP registers are not
-tracked by sites; `_check` still covers what survives to the end. Spike runs with `--isa` derived from `--xlen`/`--isa` and with
+tracked by sites; `_check` still covers what survives to the end. Spike runs with `--isa` derived from `--xlen`/`--isa`, `--priv` from `--priv`, and with
 `-m<ram-base>:<ram-size>`.
 
 Use `./target/release/rvgen --help`, `one --help`, or `many --help` to inspect the CLI.

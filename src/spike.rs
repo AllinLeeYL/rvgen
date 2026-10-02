@@ -29,6 +29,7 @@ pub struct ArchState {
 pub struct Spike {
     path: String,
     isa: String,
+    privileges: String,
     memory: String,
     has_fpu: bool,
 }
@@ -39,6 +40,7 @@ impl Spike {
         Self {
             path: path.into(),
             isa: target.spike_isa(),
+            privileges: target.spike_priv(),
             memory: format!("-m{:#x}:{:#x}", ram.start, ram.size),
             has_fpu: target.has(Extension::F),
         }
@@ -100,6 +102,7 @@ impl Spike {
     fn run(&self, args: &[String]) -> Result<(i32, String)> {
         let mut child = Command::new(&self.path)
             .arg(format!("--isa={}", self.isa))
+            .arg(format!("--priv={}", self.privileges))
             .arg(&self.memory)
             .args(args)
             .stdin(Stdio::null())
