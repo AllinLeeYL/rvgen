@@ -11,6 +11,7 @@ use crate::riscv::{Csr, Extension, FReg, Instruction, PrivilegeLevel, XReg, Xlen
 use crate::spike::ArchState;
 use crate::target::Target;
 use crate::utils::cut_cake_randomly;
+use crate::weights::InstrWeights;
 
 /// Labels, exported as ELF symbols, of the parts of a hart's code.
 pub const INIT_LABEL: &str = "_init";
@@ -87,7 +88,7 @@ impl Hart {
             bbs: cut_cake_randomly(num_instrs, Some(1), Some(32), rng)
                 .into_iter()
                 .enumerate()
-                .map(|(id, budget)| BasicBlock::new(id, rand::random::<bool>(), budget))
+                .map(|(id, budget)| BasicBlock::new(id, rng.random::<bool>(), budget))
                 .collect(),
         };
         debug_assert_eq!(
@@ -97,7 +98,8 @@ impl Hart {
         core
     }
 
-    /// Generate the hart's code. With `self_check`, a self-check block holding
+    /// Generate the hart's code, drawing each workload block's opcodes from
+    /// the matching entry of `weights` (one per block). With `self_check`, a self-check block holding
     /// placeholder values precedes the exit; patch the reference values in with
     /// [`Hart::set_expected`] before encoding the final program. With
     /// `entangle` (holding the mid-block guard threshold), the workload holds
@@ -108,16 +110,23 @@ impl Hart {
         rng: &mut (impl Rng + ?Sized),
         target: &Target,
         state: &mut GlobalState,
+        weights: &[InstrWeights],
         self_check: bool,
         entangle: Option<usize>,
     ) -> Result<()> {
+        ensure!(
+            weights.len() == self.bbs.len(),
+            "{} instruction weights for {} basic blocks",
+            weights.len(),
+            self.bbs.len()
+        );
         let sections: Vec<_> = state.memory.data_sections().collect();
         self.state.mem_bases = MemBases::pick(&sections, rng)?;
         let reserved: Vec<_> = self.state.mem_bases.bases.iter().map(|base| base.reg).collect();
         let mut sites =
             entangle.map(|threshold| SiteBuilder::new(target, threshold, reserved.clone()));
-        for bb in self.bbs.iter_mut() {
-            bb.run(rng, target, state, & mut self.state, sites.as_mut())?;
+        for (bb, weights) in self.bbs.iter_mut().zip(weights) {
+            bb.run(rng, target, state, &mut self.state, weights, sites.as_mut())?;
         }
         let tohost = state.memory.get(".tohost")?.region.start;
 

@@ -1,5 +1,8 @@
-use crate::riscv::{Extension, Opcode, PrivilegeLevel, Xlen};
-use clap::Args;
+use crate::riscv::{Extension, InstructionClass, Opcode, PrivilegeLevel, Xlen};
+use crate::weights::WeightSpec;
+use clap::{Args, Parser};
+use std::fmt::Display;
+use std::str::FromStr;
 
 #[derive(Args, Clone)]
 pub struct CommonOpts {
@@ -62,6 +65,52 @@ pub struct CommonOpts {
     /// Spike executable that computes the self-check's expected values.
     #[arg(long, default_value = "spike")]
     pub spike: String,
+
+    /// Relative weight of an opcode in the workload, as `MNEMONIC=WEIGHT`.
+    /// Repeat the flag or comma-separate, e.g. `--weight mul=4,beq=0`. 0
+    /// excludes the opcode. Beats `--class-weight` and `--default-weight`.
+    /// The conditional branches and `jalr` set the branch density, and need
+    /// entanglement (see the README).
+    #[arg(long = "weight", value_name = "OPCODE=WEIGHT", value_delimiter = ',', value_parser = parse_weight::<Opcode>)]
+    pub opcode_weights: Vec<(Opcode, f64)>,
+
+    /// Relative weight of every opcode in a class, as `CLASS=WEIGHT`, e.g.
+    /// `--class-weight memory=3,branch=0.5`. Classes are the names in the
+    /// README, case-insensitive.
+    #[arg(long = "class-weight", value_name = "CLASS=WEIGHT", value_delimiter = ',', value_parser = parse_weight::<InstructionClass>)]
+    pub class_weights: Vec<(InstructionClass, f64)>,
+
+    /// Weight of every opcode not named by `--weight` or `--class-weight`.
+    /// Branches and `jalr` get a quarter of it.
+    #[arg(long, default_value = "1.0")]
+    pub default_weight: f64,
+
+    /// Seed for generation: the same seed, options, and weights always give
+    /// the same program. Random by default. `many` uses seed + index.
+    #[arg(long)]
+    pub seed: Option<u64>,
+}
+
+/// The CLI's defaults, for library users that fill in only what they change.
+impl Default for CommonOpts {
+    fn default() -> Self {
+        #[derive(Parser)]
+        struct Defaults {
+            #[command(flatten)]
+            common: CommonOpts,
+        }
+        Defaults::parse_from(["rvgen"]).common
+    }
+}
+
+impl CommonOpts {
+    pub fn weight_spec(&self) -> WeightSpec {
+        WeightSpec {
+            default: self.default_weight,
+            classes: self.class_weights.clone(),
+            opcodes: self.opcode_weights.clone(),
+        }
+    }
 }
 
 #[derive(Args, Clone)]
@@ -83,6 +132,21 @@ pub struct ManyOpts {
     // Number of ELF files to generate
     #[arg(long, default_value = "100")]
     pub num_elfs: u32,
+}
+
+fn parse_weight<T: FromStr>(value: &str) -> Result<(T, f64), String>
+where
+    T::Err: Display,
+{
+    let (name, weight) = value
+        .split_once('=')
+        .ok_or_else(|| format!("`{value}` is not NAME=WEIGHT"))?;
+    let (name, weight) = (name.trim(), weight.trim());
+    let key = name.parse::<T>().map_err(|error| format!("`{name}`: {error}"))?;
+    let weight = weight
+        .parse::<f64>()
+        .map_err(|error| format!("invalid weight `{weight}`: {error}"))?;
+    Ok((key, weight))
 }
 
 fn parse_address(value: &str) -> Result<u64, String> {

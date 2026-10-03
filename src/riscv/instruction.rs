@@ -72,6 +72,29 @@ pub enum InstructionClass {
     Csr,
 }
 impl InstructionClass {
+    pub const ALL: [Self; 20] = [
+        Self::Other,
+        Self::Alu,
+        Self::Alu64,
+        Self::MulDiv,
+        Self::MulDiv64,
+        Self::Memory,
+        Self::Memory64,
+        Self::Branch,
+        Self::Jal,
+        Self::Jalr,
+        Self::Amo,
+        Self::Amo64,
+        Self::FloatMemory,
+        Self::Float,
+        Self::Float64,
+        Self::DoubleMemory,
+        Self::Double,
+        Self::Double64,
+        Self::Fence,
+        Self::Csr,
+    ];
+
     pub fn opcodes(self) -> impl Iterator<Item = Opcode> {
         Opcode::ALL
             .iter()
@@ -88,6 +111,35 @@ impl InstructionClass {
                 | Self::Float64
                 | Self::Double64
         )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownClass(pub String);
+impl fmt::Display for UnknownClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names: Vec<_> = InstructionClass::ALL
+            .iter()
+            .map(|class| format!("{class:?}"))
+            .collect();
+        write!(
+            f,
+            "unknown instruction class `{}` (one of: {})",
+            self.0,
+            names.join(", ")
+        )
+    }
+}
+impl std::error::Error for UnknownClass {}
+/// Class names are the variant names, matched case-insensitively.
+impl FromStr for InstructionClass {
+    type Err = UnknownClass;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|class| format!("{class:?}").eq_ignore_ascii_case(value))
+            .ok_or_else(|| UnknownClass(value.to_string()))
     }
 }
 

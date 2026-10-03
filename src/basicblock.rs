@@ -3,8 +3,9 @@ use crate::hart::HartState;
 use crate::orchestrator::GlobalState;
 use crate::riscv::asmutil::{csr_rd_and_addr, with_csr};
 use crate::riscv::asmutil::load_imm32;
-use crate::riscv::{Instruction, InstructionClass, Opcode, XReg, Xlen};
+use crate::riscv::{Instruction, XReg, Xlen};
 use crate::target::Target;
+use crate::weights::{InstrWeights, is_control_flow, unweightable_reason};
 use anyhow::{Result, ensure};
 use rand::{Rng, RngExt};
 
@@ -32,39 +33,48 @@ impl BasicBlock {
         }
     }
 
-    /// Generate the block's workload. Memory accesses go through the hart's
-    /// base registers (see [`crate::membase`]). With `sites`, the block ends
-    /// with entanglement sites checking the registers it wrote (see
-    /// [`crate::entangle`]).
+    /// Generate the block's workload, drawing opcodes from `weights`. With `sites`, memory base addresses are
+    /// derived from workload registers and the block ends with entanglement
+    /// sites checking the registers it wrote (see [`crate::entangle`]).
     pub fn run(
         &mut self,
         rng: &mut (impl Rng + ?Sized),
         target: &Target,
         _state: &mut GlobalState,
         hart_state: &mut HartState,
+        weights: &InstrWeights,
         mut sites: Option<&mut SiteBuilder>,
     ) -> Result<()> {
+        // Branches and jalr are drawn like any opcode, but only exist as
+        // entanglement sites.
         let candidates: Vec<_> = target
             .workload_opcodes()
+            .filter(|opcode| unweightable_reason(*opcode).is_none())
             .filter(|opcode| {
-                !matches!(
-                    opcode.class(),
-                    InstructionClass::Branch | InstructionClass::Jal | InstructionClass::Jalr
-                ) && !matches!(
-                    opcode,
-                    Opcode::Ecall | Opcode::Ebreak | Opcode::CEbreak | Opcode::Sret | Opcode::Mret
-                )
+                !is_control_flow(*opcode)
+                    || sites.as_deref().is_some_and(|builder| builder.can_generate(*opcode))
             })
             .collect();
         ensure!(
             self.budget == 0 || !candidates.is_empty(),
             "no enabled instructions remain for a straight-line workload"
         );
+        let sampler = (self.budget > 0)
+            .then(|| weights.sampler(&candidates))
+            .transpose()?;
         let xlen = target.xlen;
         let csrs = target.workload_csrs();
 
         for _ in 0..self.budget {
-            let opcode = candidates[rng.random_range(0..candidates.len())];
+            let opcode = sampler.as_ref().expect("built for a nonzero budget").sample(rng);
+            if is_control_flow(opcode) {
+                let builder = sites
+                    .as_deref_mut()
+                    .expect("control flow is only drawn when entangling");
+                let site = builder.control_flow(&mut self.instrs, opcode, weights, rng);
+                self.sites.extend(site);
+                continue;
+            }
             let mut instr = opcode.random(rng, xlen)?;
             if csr_rd_and_addr(&instr).is_some() {
                 instr = with_csr(instr, csrs[rng.random_range(0..csrs.len())]);

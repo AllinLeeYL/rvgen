@@ -2,14 +2,15 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
-use rand::{RngExt, SeedableRng, rngs::StdRng};
+use rand::{SeedableRng, rngs::StdRng};
 
 use crate::elf::{Elf, HostInterface, write_executable};
 use crate::hart::Hart;
 use crate::memory::{MemoryLayout, MemoryRegion, Permissions, Section};
-use crate::options::{ManyOpts, OneOpts};
+use crate::options::{CommonOpts, ManyOpts, OneOpts};
 use crate::spike::Spike;
 use crate::target::Target;
+use crate::weights::{BlockContext, Fixed, WeightPolicy};
 
 #[derive(Default)]
 pub struct GlobalState {
@@ -24,10 +25,18 @@ pub struct Orchestrator {
     self_check: bool,
     /// The mid-block guard threshold when entangling.
     entangle: Option<usize>,
+    /// Decides each basic block's instruction mix.
+    weights: Box<dyn WeightPolicy>,
 }
 
 impl Orchestrator {
-    fn new(target: Target, seed: u64, self_check: bool, entangle: Option<usize>) -> Self {
+    fn new(
+        target: Target,
+        seed: u64,
+        self_check: bool,
+        entangle: Option<usize>,
+        weights: Box<dyn WeightPolicy>,
+    ) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
         let harts = std::iter::repeat_with(|| Hart::new(target.num_instrs, &mut rng))
             .take(target.num_cores)
@@ -57,15 +66,30 @@ impl Orchestrator {
             rng,
             self_check,
             entangle,
+            weights,
         }
     }
 
     fn run(&mut self) -> Result<()> {
-        for core in self.harts.iter_mut() {
+        for (hart, core) in self.harts.iter_mut().enumerate() {
+            let weights: Vec<_> = core
+                .bbs
+                .iter()
+                .enumerate()
+                .map(|(block, bb)| {
+                    let ctx = BlockContext {
+                        hart,
+                        block,
+                        budget: bb.budget,
+                    };
+                    self.weights.draw(&ctx, &mut self.rng)
+                })
+                .collect();
             core.run(
                 &mut self.rng,
                 &self.target,
                 &mut self.state,
+                &weights,
                 self.self_check,
                 self.entangle,
             )?;
@@ -128,49 +152,59 @@ impl Orchestrator {
     }
 }
 
-pub fn gen_one(opts: OneOpts, mkdir: bool) -> Result<()> {
+/// Generate one program for `opts` and return the ELF image. Spike is run
+/// here when the program self-checks.
+pub fn generate(opts: &CommonOpts) -> Result<Vec<u8>> {
     let ram = MemoryRegion {
-        start: opts.common.ram_base,
-        size: opts.common.ram_size,
+        start: opts.ram_base,
+        size: opts.ram_size,
         permissions: Permissions::RWX,
     };
     let target = Target::new(
-        opts.common.xlen,
-        opts.common.isa.iter().copied(),
-        opts.common.privileges.iter().copied(),
-        opts.common.disabled_instrs.iter().copied().collect(),
-        opts.common.num_cores,
-        opts.common.num_instrs,
-        ram.clone(),
-        opts.common.scratch_size,
-        opts.common.smc_size,
+        opts.xlen,
+        opts.isa.iter().copied(),
+        opts.privileges.iter().copied(),
+        opts.disabled_instrs.iter().copied().collect(),
+        opts.num_cores,
+        opts.num_instrs,
+        ram,
+        opts.scratch_size,
+        opts.smc_size,
     )?;
+    let self_check = !opts.no_self_check;
+    let entangle = (self_check && !opts.no_entangle).then_some(opts.guard_threshold);
+    let weights = opts.weight_spec().build(&target, entangle.is_some())?;
+    let spike = Spike::new(&opts.spike, &target);
+    let seed = opts.seed.unwrap_or_else(rand::random);
+    let mut orchestrator =
+        Orchestrator::new(target, seed, self_check, entangle, Box::new(Fixed(weights)));
+
+    // generate code -- it allocate memory address on the fly
+    orchestrator.run()?;
+    if self_check {
+        orchestrator.resolve_self_check(&spike)
+    } else {
+        Ok(orchestrator.encode()?.0)
+    }
+}
+
+pub fn gen_one(opts: OneOpts, mkdir: bool) -> Result<()> {
     if mkdir {
         if let Some(parent) = Path::new(&opts.output).parent() {
             fs::create_dir_all(parent)?;
         }
     }
-    let self_check = !opts.common.no_self_check;
-    let entangle = (self_check && !opts.common.no_entangle).then_some(opts.common.guard_threshold);
-    let spike = Spike::new(&opts.common.spike, &target);
-    let mut rng = rand::rng();
-    let mut orchestrator = Orchestrator::new(target, rng.random(), self_check, entangle);
-
-    // generate code -- it allocate memory address on the fly
-    orchestrator.run()?;
-    let bytes = if self_check {
-        orchestrator.resolve_self_check(&spike)?
-    } else {
-        orchestrator.encode()?.0
-    };
+    let bytes = generate(&opts.common)?;
     write_executable(&bytes, Path::new(&opts.output))
 }
 
 pub fn gen_many(opts: ManyOpts) -> Result<()> {
     fs::create_dir_all(&opts.outdir)?;
     for i in 0..opts.num_elfs {
+        let mut common = opts.common.clone();
+        common.seed = common.seed.map(|seed| seed.wrapping_add(u64::from(i)));
         let oneopts = OneOpts {
-            common: opts.common.clone(),
+            common,
             output: format!("{}/{}.elf", opts.outdir, i),
         };
         gen_one(oneopts, false)?;

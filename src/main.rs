@@ -1,15 +1,4 @@
-mod basicblock;
-mod elf;
-mod entangle;
-mod hart;
-mod membase;
-mod memory;
-mod options;
-mod orchestrator;
-mod riscv;
-mod spike;
-mod target;
-mod utils;
+use rvgen::{options, orchestrator};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

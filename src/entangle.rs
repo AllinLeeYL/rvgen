@@ -27,11 +27,13 @@
 //! the workload's values (the draft Spike runs); the register state at every
 //! site is the same in the draft and in the final program.
 use anyhow::{Result, anyhow, ensure};
+use rand::distr::{Distribution, weighted::WeightedIndex};
 use rand::{Rng, RngExt};
 
 use crate::riscv::asmutil::{load_imm_fixed, to_unsigned, twos_complement};
 use crate::riscv::{EncodedInstruction, Instruction, Opcode, XReg, Xlen};
 use crate::target::Target;
+use crate::weights::InstrWeights;
 
 /// Branch opcodes as complementary pairs: for any operands, exactly one of each
 /// pair is taken, so an enabled pair can always realize either direction.
@@ -43,13 +45,6 @@ const BRANCH_PAIRS: [(Opcode, Opcode); 3] = [
 
 /// Most workload registers a jump target is entangled with.
 const MAX_PEEK: usize = 4;
-
-/// Probability that a block ends with a branch or indirect jump before its
-/// guard.
-const CONTROL_FLOW_PROBA: f64 = 0.5;
-
-/// Probability that such a control-flow site is an indirect jump.
-const JALR_PROBA: f64 = 0.3;
 
 
 /// Where a value site's register must end up pointing.
@@ -78,6 +73,9 @@ pub enum Kind {
         rs1: XReg,
         rs2: XReg,
         taken: bool,
+        /// Weights of the enabled branch opcodes, which bias the choice of
+        /// `opcode`.
+        weights: Vec<(Opcode, f64)>,
         /// Chosen once Spike tells us the operands' values.
         opcode: Option<Opcode>,
     },
@@ -156,15 +154,23 @@ impl Site {
                 rs1,
                 rs2,
                 taken,
+                weights,
                 opcode,
             } => {
                 let a = xregs[rs1.index() as usize];
                 let b = xregs[rs2.index() as usize];
-                let candidates: Vec<_> = enabled_branch_opcodes(target)
-                    .filter(|op| branch_taken(*op, a, b, xlen) == *taken)
+                // The data decides which opcodes realize the planned direction;
+                // the weights choose among them, uniformly if they are all 0.
+                let candidates: Vec<_> = weights
+                    .iter()
+                    .filter(|(op, _)| branch_taken(*op, a, b, xlen) == *taken)
                     .collect();
                 ensure!(!candidates.is_empty(), "no enabled branch realizes the planned direction");
-                *opcode = Some(candidates[rng.random_range(0..candidates.len())]);
+                let chosen = match WeightedIndex::new(candidates.iter().map(|(_, w)| *w)) {
+                    Ok(index) => candidates[index.sample(rng)],
+                    Err(_) => candidates[rng.random_range(0..candidates.len())],
+                };
+                *opcode = Some(chosen.0);
             }
             Kind::Guard { .. } => {}
         }
@@ -203,6 +209,7 @@ impl Site {
                 rs2,
                 taken,
                 opcode,
+                ..
             } => {
                 instrs[self.at] = match opcode {
                     Some(op) => branch(op, rs1, rs2, 8)?,
@@ -278,27 +285,49 @@ impl<'a> SiteBuilder<'a> {
         }
     }
 
-    /// Append the sites ending a block: maybe a branch or indirect jump, then
-    /// a guard over every fresh register.
+    /// Append the site ending a block: a guard over every fresh register.
     pub fn block_end(&mut self, instrs: &mut Vec<Instruction>, rng: &mut (impl Rng + ?Sized)) -> Vec<Site> {
-        let mut sites = Vec::new();
-        if rng.random_bool(CONTROL_FLOW_PROBA) {
-            sites.extend(self.control_flow(instrs, rng));
-        }
         if self.can_guard() && !self.fresh.is_empty() {
-            sites.extend(self.guard(instrs, rng));
+            self.guard(instrs, rng)
+        } else {
+            Vec::new()
         }
-        sites
     }
 
-    /// A conditional branch or an indirect jump to the next instruction, if
-    /// the enabled opcodes allow one.
-    fn control_flow(&mut self, instrs: &mut Vec<Instruction>, rng: &mut (impl Rng + ?Sized)) -> Vec<Site> {
-        let can_branch = BRANCH_PAIRS
+    /// Whether [`SiteBuilder::control_flow`] can generate `opcode`: it is
+    /// enabled and, for a branch, some complementary pair is too, so either
+    /// direction can be realized.
+    pub fn can_generate(&self, opcode: Opcode) -> bool {
+        match opcode {
+            Opcode::Jalr => self.enabled(Opcode::Jalr),
+            _ => {
+                BRANCH_PAIRS.iter().any(|(a, b)| opcode == *a || opcode == *b)
+                    && self.enabled(opcode)
+                    && self.can_branch()
+            }
+        }
+    }
+
+    fn can_branch(&self) -> bool {
+        BRANCH_PAIRS
             .iter()
-            .any(|(a, b)| self.enabled(*a) && self.enabled(*b));
-        let can_jalr = self.enabled(Opcode::Jalr);
-        if can_jalr && (!can_branch || rng.random_bool(JALR_PROBA)) {
+            .any(|(a, b)| self.enabled(*a) && self.enabled(*b))
+    }
+
+    /// A control-flow site for a drawn `opcode`: an indirect jump to the next
+    /// instruction for `jalr`, otherwise a conditional branch skipping the
+    /// next instruction. Both only skip a `jal _fail`, so they can sit
+    /// anywhere in a block. The concrete branch opcode is picked later from
+    /// `weights`.
+    pub fn control_flow(
+        &mut self,
+        instrs: &mut Vec<Instruction>,
+        opcode: Opcode,
+        weights: &InstrWeights,
+        rng: &mut (impl Rng + ?Sized),
+    ) -> Vec<Site> {
+        debug_assert!(self.can_generate(opcode), "{opcode} cannot be generated");
+        if opcode == Opcode::Jalr {
             let rprod = self.stale(rng);
             let rd = self.stale(rng);
             let rdeps = self.peek(rng, MAX_PEEK, rprod);
@@ -313,9 +342,6 @@ impl<'a> SiteBuilder<'a> {
             instrs.push(Instruction::nop());
             return vec![site];
         }
-        if !can_branch {
-            return Vec::new();
-        }
         let operands = self.peek(rng, 2, XReg::ZERO);
         let rs1 = operands[0];
         let rs2 = match operands.get(1) {
@@ -323,7 +349,11 @@ impl<'a> SiteBuilder<'a> {
             None => self.random_reg_except(rng, rs1),
         };
         let taken = rng.random_bool(0.5);
-        vec![branch_site(instrs, Kind::Branch { rs1, rs2, taken, opcode: None }, taken)]
+        let weights = enabled_branch_opcodes(self.target)
+            .map(|op| (op, weights.get(op)))
+            .collect();
+        let kind = Kind::Branch { rs1, rs2, taken, weights, opcode: None };
+        vec![branch_site(instrs, kind, taken)]
     }
 
     /// `acc = K ^ fresh_1 ^ ... ^ fresh_k`, which is 0 in a correct execution,
@@ -502,6 +532,72 @@ mod tests {
         // 0x8000_0000 is negative on RV32 only.
         assert!(branch_taken(Opcode::Blt, 0x8000_0000, 0, Xlen::X32));
         assert!(!branch_taken(Opcode::Blt, 0x8000_0000, 0, Xlen::X64));
+    }
+
+    fn resolved_branch(weights: &[(Opcode, f64)], taken: bool, seed: u64) -> Opcode {
+        use crate::memory::{MemoryRegion, Permissions};
+        use crate::riscv::Extension;
+        use rand::SeedableRng;
+        let target = Target::new(
+            Xlen::X64,
+            [Extension::I, Extension::Zicsr],
+            [crate::riscv::PrivilegeLevel::Machine],
+            Default::default(),
+            1,
+            10,
+            MemoryRegion {
+                start: 0x8000_0000,
+                size: 0x1000,
+                permissions: Permissions::default(),
+            },
+            0,
+            0,
+        )
+        .unwrap();
+        let mut site = Site {
+            at: 0,
+            kind: Kind::Branch {
+                rs1: XReg::A0,
+                rs2: XReg::A1,
+                taken,
+                weights: weights.to_vec(),
+                opcode: None,
+            },
+            fail_at: None,
+        };
+        // a0 = a1 = 5 and a0 < a1 is false: beq, bge, bgeu are taken.
+        let mut xregs = [0u64; 32];
+        xregs[XReg::A0.index() as usize] = 5;
+        xregs[XReg::A1.index() as usize] = 5;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        site.resolve(&xregs, &target, &mut rng).unwrap();
+        match site.kind {
+            Kind::Branch { opcode: Some(opcode), .. } => opcode,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn branch_opcode_follows_weights_among_those_realizing_the_direction() {
+        let all = |beq, bne, blt, bge, bltu, bgeu| {
+            vec![
+                (Opcode::Beq, beq),
+                (Opcode::Bne, bne),
+                (Opcode::Blt, blt),
+                (Opcode::Bge, bge),
+                (Opcode::Bltu, bltu),
+                (Opcode::Bgeu, bgeu),
+            ]
+        };
+        for seed in 0..50 {
+            // Taken: only beq, bge, bgeu qualify; the weights pick bge.
+            assert_eq!(resolved_branch(&all(0.0, 9.0, 9.0, 1.0, 9.0, 0.0), true, seed), Opcode::Bge);
+            // Not taken: only bne, blt, bltu qualify; the weights pick bltu.
+            assert_eq!(resolved_branch(&all(9.0, 0.0, 0.0, 9.0, 3.0, 9.0), false, seed), Opcode::Bltu);
+            // No qualifying opcode has weight: any qualifying one will do.
+            let any = resolved_branch(&all(0.0, 9.0, 9.0, 0.0, 9.0, 0.0), true, seed);
+            assert!(matches!(any, Opcode::Beq | Opcode::Bge | Opcode::Bgeu));
+        }
     }
 
     #[test]

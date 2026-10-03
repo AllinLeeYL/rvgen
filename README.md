@@ -48,10 +48,82 @@ Configure a batch of programs:
 - `--guard-threshold`: also place a guard mid-block once this many
   workload-written registers are unchecked (default: `8`); `0` guards at block
   ends only.
+- `--weight OPCODE=W`, `--class-weight CLASS=W`, `--default-weight W`: the
+  instruction mix, see [Instruction weights](#instruction-weights).
+- `--seed`: makes generation reproducible (default: random). `many` uses
+  `seed + index` for each program.
 
 The orchestrator randomly partitions each core's budget into basic blocks of
 1–32 instructions. Block count is determined automatically, and block budgets
 sum to the requested instruction count for each core.
+
+## Instruction weights
+
+Every instruction in the workload is drawn from a weighted distribution over
+the opcodes the target supports. By default all opcodes are equally likely.
+Weights are relative (no need to sum to 1) and are given on the command line:
+
+```sh
+# 4x as many loads/stores as anything else, no multiplies, extra `xor`s
+./rvgen one --isa i,m,zicsr --class-weight memory=4 --class-weight muldiv=0 \
+    --weight xor=10 --seed 1
+# comma-separated also works
+./rvgen one --weight add=3,sub=3,mulh=0
+```
+
+- `--weight MNEMONIC=W` sets one opcode (`add`, `c.addi`, `fadd.s`, ...).
+- `--class-weight CLASS=W` sets every opcode of a class. Classes (case
+  insensitive): `Other`, `Alu`, `Alu64`, `MulDiv`, `MulDiv64`, `Memory`,
+  `Memory64`, `Branch`, `Jal`, `Jalr`, `Amo`, `Amo64`, `FloatMemory`, `Float`,
+  `Float64`, `DoubleMemory`, `Double`, `Double64`, `Fence`, `Csr`.
+- `--default-weight W` (default `1`) applies to everything not named.
+- Precedence: an opcode weight beats a class weight beats the default,
+  whatever the order of the flags.
+- A weight of 0 excludes the opcode. Weights must be finite and not negative.
+  A nonzero weight that could never take effect is an error, not a silent
+  no-op: an opcode the ISA/XLEN does not support, one in `--disabled-instrs`,
+  one the generator never emits (`jal`, `ecall`, `ebreak`, `mret`, `sret`,
+  compressed jumps and branches), or a branch without entanglement.
+- The weights count *workload* instructions. The code the generator adds
+  around them (address computation, guards, the self-check, and so on) is not
+  weighted and always uses its own instructions, such as `xor`, `beq`, `bne`
+  and `jal`. A weight of 0 for `beq` therefore removes `beq` from the
+  workload, not from the guards.
+
+**Branch frequency.** The six conditional branches and `jalr` are drawn like
+any other opcode, so their share of the total weight is their density: raise
+`--class-weight branch=` or `--weight jalr=` for more control flow, set it to 0
+for none. Each one becomes an entanglement site (see below), which needs the
+self-check; setting it without entanglement is an error. Unless named, these
+seven opcodes get a quarter of the default weight each, close to the density
+before they were weighted. `Branch` and `Jalr` are separate classes. The
+branch weights add up to the density, but which of the six a site uses also
+depends on the values Spike observed, since the opcode must go the planned
+way: among the opcodes that do, the weights choose. Weighting a single branch
+opcode therefore biases the mix without making it exclusive.
+
+The weights are plain data, so another program can build the command line (the
+full weight vector is a few kilobytes) or call the library.
+
+## Library
+
+`rvgen` is also a Rust library: the binary is a thin wrapper. Fill in
+`CommonOpts` (its `Default` is the CLI's defaults) and call `generate`, which
+returns the ELF image without touching the file system:
+
+```rust
+use rvgen::{options::CommonOpts, orchestrator::generate, riscv::{InstructionClass, Opcode}};
+
+let mut opts = CommonOpts::default();
+opts.seed = Some(42);
+opts.class_weights.push((InstructionClass::Branch, 4.0));
+opts.opcode_weights.push((Opcode::Jalr, 0.0));
+let elf: Vec<u8> = generate(&opts)?;
+```
+
+Spike is still needed for self-checking programs. For finer control over the
+mix, e.g. changing it along the program, implement `weights::WeightPolicy`:
+the orchestrator asks it for each basic block's weights.
 
 ## Code symbols
 
@@ -140,6 +212,10 @@ then patched in place like `_check`'s.
 | guard | `acc = K; acc ^= r1; ...; acc ^= rk; beq/bne acc, x0; jal _fail` | any difference, exactly |
 
 Every block ends with an optional branch or indirect jump (50%) and a guard.
+Every memory access gets an address site (replacing the plain base load),
+and the workload's weighted draws of branches and `jalr` become branch and
+jump sites wherever they fall in a block (see
+[Instruction weights](#instruction-weights)).
 `K` is patched to the target XORed with the `ri`'s expected values (0 for a
 guard), and branch opcodes are picked so the planned direction holds. Sites
 use *fresh* registers, those the workload wrote since the last guard: branch
@@ -172,7 +248,9 @@ Use `./target/release/rvgen --help`, `one --help`, or `many --help` to inspect t
 ## Layout
 
 - `src/main.rs`: CLI entry point.
+- `src/lib.rs`: the library the CLI wraps.
 - `src/options.rs`: command options.
+- `src/weights.rs`: instruction weights, their validation, and per-block policy.
 - `src/orchestrator.rs`: per-core workload planning and basic-block allocation.
 - `src/target.rs`: fixed ISA configuration and instruction selection policy.
 - `src/memory.rs`: allocated sections and memory access bounds.
