@@ -4,11 +4,14 @@
 //! workload, so a core that miscomputes one diverges instead of carrying on
 //! silently:
 //!
-//! - A *value* site builds a register as `r = K; r ^= dep_1; ...; r ^= dep_k`,
-//!   where the `dep_i` hold workload data and `K` is patched to
-//!   `dest ^ dep_1 ^ ... ^ dep_k` once Spike tells us their values. It serves
-//!   as an indirect jump target, or (with `dest = 0`) the accumulator of a
-//!   guard.
+//! - A *value* site builds a register as `r = golden; r ^= dep_1; ...;
+//!   r ^= dep_k`, where the `dep_i` hold workload data and the *golden value*
+//!   is patched to `dest ^ dep_1 ^ ... ^ dep_k` once Spike, the golden model,
+//!   tells us their values. It serves as an indirect jump target, or (with
+//!   `dest = 0`) the accumulator of a guard. On RV64 the golden value is
+//!   loaded from the `.golden` data section (a [`PoolRef`]), so patching it
+//!   rewrites data rather than code; on RV32, or with `--inline-golden`, it is
+//!   materialized inline with [`load_imm_fixed`], which is as short there.
 //! - A *branch* site compares two workload registers. Its opcode is picked
 //!   once Spike tells us their values, so the planned direction is the right
 //!   one; the wrong direction lands on a jump to `_fail`.
@@ -30,7 +33,7 @@ use anyhow::{Result, anyhow, ensure};
 use rand::distr::{Distribution, weighted::WeightedIndex};
 use rand::{Rng, RngExt};
 
-use crate::riscv::asmutil::{load_imm_fixed, to_unsigned, twos_complement};
+use crate::riscv::asmutil::{load_imm_fixed, split_imm32, to_unsigned, twos_complement};
 use crate::riscv::{EncodedInstruction, Instruction, Opcode, XReg, Xlen};
 use crate::target::Target;
 use crate::weights::InstrWeights;
@@ -46,6 +49,49 @@ const BRANCH_PAIRS: [(Opcode, Opcode); 3] = [
 /// Most workload registers a jump target is entangled with.
 const MAX_PEEK: usize = 4;
 
+/// Bytes per constant in the `.golden` section.
+pub const GOLDEN_SLOT_SIZE: u64 = 8;
+
+/// Instructions loading a golden value from `.golden`: `auipc r; ld r`.
+const GOLDEN_LOAD_LEN: usize = 2;
+
+/// A PC-relative reference to slot `slot` of `.golden` at index `at` of a
+/// block: `auipc rd; ld rd` loads the slot, or with `load` false,
+/// `auipc rd; addi rd` points `rd` at it. Written once the code is linked.
+#[derive(Debug, Clone, Copy)]
+pub struct PoolRef {
+    pub at: usize,
+    pub rd: XReg,
+    pub slot: usize,
+    pub load: bool,
+}
+
+impl PoolRef {
+    /// The two instructions for a slot `offset` bytes from the `auipc`.
+    pub fn instrs(&self, offset: i32) -> [Instruction; 2] {
+        let (hi, lo) = split_imm32(offset as u32);
+        let rd = self.rd;
+        [
+            Instruction::Auipc { rd, imm: hi },
+            if self.load {
+                Instruction::Ld { rd, rs1: rd, imm: lo }
+            } else {
+                Instruction::Addi { rd, rs1: rd, imm: lo }
+            },
+        ]
+    }
+
+    /// Write the reference into `instrs`, the block starting at `block_addr`,
+    /// given that `.golden` starts at `golden_addr`.
+    pub fn link(&self, instrs: &mut [Instruction], block_addr: u64, golden_addr: Option<u64>) -> Result<()> {
+        let golden_addr = golden_addr.ok_or_else(|| anyhow!("code reads .golden, which is not reserved"))?;
+        let pc = block_addr + code_size(&instrs[..self.at]) as u64;
+        let offset = (golden_addr + self.slot as u64 * GOLDEN_SLOT_SIZE).wrapping_sub(pc) as i64;
+        ensure!(offset == offset as i32 as i64, ".golden is out of AUIPC range");
+        instrs[self.at..self.at + 2].copy_from_slice(&self.instrs(offset as i32));
+        Ok(())
+    }
+}
 
 /// Where a value site's register must end up pointing.
 #[derive(Debug, Clone, Copy)]
@@ -68,6 +114,9 @@ pub enum Kind {
         value: Option<u64>,
         /// XOR of Spike's values of `rdeps` at the site, known once resolved.
         rdep_val: Option<u64>,
+        /// Index of the `.golden` slot holding the golden value, or `None`
+        /// when it is materialized inline.
+        golden_slot: Option<usize>,
     },
     Branch {
         rs1: XReg,
@@ -95,9 +144,14 @@ pub struct Site {
 }
 
 impl Site {
-    /// Number of instructions in the producer sequence of a value site.
-    fn producer_len(xlen: Xlen) -> usize {
-        load_imm_fixed(XReg::ZERO, 0, xlen).len()
+    /// Number of instructions in the producer sequence of a value site:
+    /// a load from `.golden` if `golden_slot`, an inline constant otherwise.
+    fn producer_len(xlen: Xlen, golden_slot: bool) -> usize {
+        if golden_slot {
+            GOLDEN_LOAD_LEN
+        } else {
+            load_imm_fixed(XReg::ZERO, 0, xlen).len()
+        }
     }
 
     /// Index of the instruction at which Spike must report the registers the
@@ -105,19 +159,30 @@ impl Site {
     /// the branch itself for a branch site.
     pub fn probe_index(&self, xlen: Xlen) -> Option<usize> {
         match self.kind {
-            Kind::Value { .. } => Some(self.at + Self::producer_len(xlen)),
+            Kind::Value { golden_slot, .. } => {
+                Some(self.at + Self::producer_len(xlen, golden_slot.is_some()))
+            }
             Kind::Branch { .. } => Some(self.at),
             Kind::Guard { .. } => None,
         }
     }
 
     /// Fix code addresses: `block_addr` is the absolute address of the
-    /// block's first instruction and `fail_addr` that of `_fail`.
-    pub fn link(&mut self, instrs: &mut [Instruction], block_addr: u64, fail_addr: u64) -> Result<()> {
+    /// block's first instruction, `fail_addr` that of `_fail` and
+    /// `golden_addr` that of the `.golden` section, if any. A site reading
+    /// `.golden` gets its `auipc; ld` here, as its address never changes.
+    pub fn link(
+        &mut self,
+        instrs: &mut [Instruction],
+        block_addr: u64,
+        fail_addr: Option<u64>,
+        golden_addr: Option<u64>,
+    ) -> Result<()> {
         let addr_of = |instrs: &[Instruction], index: usize| {
             block_addr + code_size(&instrs[..index]) as u64
         };
         if let Some(fail_at) = self.fail_at {
+            let fail_addr = fail_addr.ok_or_else(|| anyhow!("site jumps to _fail, which is missing"))?;
             let offset = fail_addr.wrapping_sub(addr_of(instrs, fail_at)) as i64;
             ensure!(
                 (-(1 << 20)..(1 << 20)).contains(&offset),
@@ -127,6 +192,15 @@ impl Site {
                 rd: XReg::ZERO,
                 imm: offset as i32,
             };
+        }
+        if let Kind::Value {
+            rprod,
+            golden_slot: Some(slot),
+            ..
+        } = self.kind
+        {
+            let load = PoolRef { at: self.at, rd: rprod, slot, load: true };
+            load.link(instrs, block_addr, golden_addr)?;
         }
         if let Kind::Value { dest, value, .. } = &mut self.kind {
             *value = Some(match *dest {
@@ -177,6 +251,31 @@ impl Site {
         Ok(())
     }
 
+    /// The golden value: what the producer must load so that XORing the
+    /// `rdeps` yields `dest`. `value` in the draft, where the XORs read x0;
+    /// `value ^ rdeps` once Spike has reported the `rdeps`.
+    fn golden(&self) -> Result<Option<u64>> {
+        let Kind::Value { value, rdep_val, .. } = self.kind else {
+            return Ok(None);
+        };
+        let value = value.ok_or_else(|| anyhow!("site rendered before linking"))?;
+        Ok(Some(value ^ rdep_val.unwrap_or(0)))
+    }
+
+    /// The `.golden` slot this site reads and the golden value it must hold,
+    /// once linking has fixed the site's destination.
+    pub fn golden_entry(&self) -> Option<(usize, u64)> {
+        match self.kind {
+            Kind::Value {
+                golden_slot: Some(slot),
+                value: Some(value),
+                rdep_val,
+                ..
+            } => Some((slot, value ^ rdep_val.unwrap_or(0))),
+            _ => None,
+        }
+    }
+
     /// Write the site's instructions for what is currently known: the
     /// placeholder before [`Site::resolve`], the entangled form after.
     pub fn render(&self, instrs: &mut [Instruction], xlen: Xlen) -> Result<()> {
@@ -185,17 +284,20 @@ impl Site {
             Kind::Value {
                 rprod,
                 ref rdeps,
-                value,
                 rdep_val,
+                golden_slot,
                 ..
             } => {
-                let value = value.ok_or_else(|| anyhow!("site rendered before linking"))?;
                 // Draft: rprod = value ^ 0 ^ ... ^ 0.
                 // Final: rprod = (value ^ rdeps) ^ rdep_1 ^ ... ^ rdep_k.
-                let constant = value ^ rdep_val.unwrap_or(0);
-                let producer = load_imm_fixed(rprod, constant as i64, xlen);
-                let n = producer.len();
-                instrs[self.at..self.at + n].copy_from_slice(&producer);
+                let golden = self.golden()?.expect("a value site");
+                let n = Self::producer_len(xlen, golden_slot.is_some());
+                // A load from .golden is written by `link`; the golden value
+                // itself goes into the section (see `golden_entry`).
+                if golden_slot.is_none() {
+                    let producer = load_imm_fixed(rprod, golden as i64, xlen);
+                    instrs[self.at..self.at + n].copy_from_slice(&producer);
+                }
                 for (i, rdep) in rdeps.iter().enumerate() {
                     instrs[self.at + n + i] = Instruction::Xor {
                         rd: rprod,
@@ -245,16 +347,29 @@ pub struct SiteBuilder<'a> {
     guard_threshold: usize,
     /// Registers site code must never write or read (the memory bases).
     reserved: Vec<XReg>,
+    /// Whether value sites load their golden value from `.golden`.
+    golden_section: bool,
+    /// `.golden` slots handed out so far.
+    golden_slots: usize,
 }
 
 impl<'a> SiteBuilder<'a> {
-    pub fn new(target: &'a Target, guard_threshold: usize, reserved: Vec<XReg>) -> Self {
+    /// With `golden_section` (RV64 only), value sites load their golden value
+    /// from the `.golden` section.
+    pub fn new(target: &'a Target, guard_threshold: usize, reserved: Vec<XReg>, golden_section: bool) -> Self {
         Self {
             target,
             fresh: Vec::new(),
             guard_threshold,
             reserved,
+            golden_section,
+            golden_slots: 0,
         }
+    }
+
+    /// Number of `.golden` slots the sites built so far read.
+    pub fn golden_slots(&self) -> usize {
+        self.golden_slots
     }
 
     /// The register the workload wrote most recently, if still unchecked.
@@ -335,7 +450,7 @@ impl<'a> SiteBuilder<'a> {
             self.clobber(rd);
             // producer; xor...; jalr rd, 0(rprod); jal x0, _fail; <dest>
             let at = instrs.len();
-            let dest = at + Site::producer_len(self.target.xlen) + rdeps.len() + 2;
+            let dest = at + Site::producer_len(self.target.xlen, self.golden_section) + rdeps.len() + 2;
             let mut site = self.value_site(instrs, rprod, rdeps, Dest::Code(dest));
             instrs.push(Instruction::Jalr { rd, rs1: rprod, imm: 0 });
             site.fail_at = Some(instrs.len());
@@ -367,11 +482,15 @@ impl<'a> SiteBuilder<'a> {
         vec![value, guard]
     }
 
-    fn value_site(&self, instrs: &mut Vec<Instruction>, rprod: XReg, rdeps: Vec<XReg>, dest: Dest) -> Site {
+    fn value_site(&mut self, instrs: &mut Vec<Instruction>, rprod: XReg, rdeps: Vec<XReg>, dest: Dest) -> Site {
         let at = instrs.len();
         // Placeholders; the site renders its real instructions once linked.
-        let n = Site::producer_len(self.target.xlen) + rdeps.len();
+        let n = Site::producer_len(self.target.xlen, self.golden_section) + rdeps.len();
         instrs.extend(std::iter::repeat_n(Instruction::nop(), n));
+        let golden_slot = self.golden_section.then(|| {
+            self.golden_slots += 1;
+            self.golden_slots - 1
+        });
         Site {
             at,
             kind: Kind::Value {
@@ -380,6 +499,7 @@ impl<'a> SiteBuilder<'a> {
                 dest,
                 value: None,
                 rdep_val: None,
+                golden_slot,
             },
             fail_at: None,
         }
@@ -534,11 +654,11 @@ mod tests {
         assert!(!branch_taken(Opcode::Blt, 0x8000_0000, 0, Xlen::X64));
     }
 
-    fn resolved_branch(weights: &[(Opcode, f64)], taken: bool, seed: u64) -> Opcode {
+    /// An RV64I machine-mode target.
+    fn test_target() -> Target {
         use crate::memory::{MemoryRegion, Permissions};
         use crate::riscv::Extension;
-        use rand::SeedableRng;
-        let target = Target::new(
+        Target::new(
             Xlen::X64,
             [Extension::I, Extension::Zicsr],
             [crate::riscv::PrivilegeLevel::Machine],
@@ -553,7 +673,12 @@ mod tests {
             0,
             0,
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    fn resolved_branch(weights: &[(Opcode, f64)], taken: bool, seed: u64) -> Opcode {
+        use rand::SeedableRng;
+        let target = test_target();
         let mut site = Site {
             at: 0,
             kind: Kind::Branch {
@@ -598,6 +723,52 @@ mod tests {
             let any = resolved_branch(&all(0.0, 9.0, 9.0, 0.0, 9.0, 0.0), true, seed);
             assert!(matches!(any, Opcode::Beq | Opcode::Bge | Opcode::Bgeu));
         }
+    }
+
+    #[test]
+    fn golden_value_is_loaded_from_its_slot() {
+        use rand::SeedableRng;
+        // A guard at 0x8000_0010 reading slot 3 of .golden at 0x87ff_f000.
+        let (block, golden_addr) = (0x8000_0000u64, 0x87ff_f000u64);
+        let mut instrs = vec![Instruction::nop(); 8];
+        let mut site = Site {
+            at: 4,
+            kind: Kind::Value {
+                rprod: XReg::A0,
+                rdeps: vec![XReg::A1, XReg::A2],
+                dest: Dest::Data(0),
+                value: None,
+                rdep_val: None,
+                golden_slot: Some(3),
+            },
+            fail_at: None,
+        };
+        site.link(&mut instrs, block, Some(block + 0x100), Some(golden_addr)).unwrap();
+        site.render(&mut instrs, Xlen::X64).unwrap();
+        let (Instruction::Auipc { rd, imm: hi }, Instruction::Ld { rd: ld_rd, rs1, imm: lo }) =
+            (instrs[4], instrs[5])
+        else {
+            panic!("expected auipc; ld, got {:?}", &instrs[4..6]);
+        };
+        assert_eq!((rd, ld_rd, rs1), (XReg::A0, XReg::A0, XReg::A0));
+        let pc = block + 4 * 4;
+        let loaded = pc.wrapping_add(((hi << 12) as i64) as u64).wrapping_add(lo as i64 as u64);
+        assert_eq!(loaded, golden_addr + 3 * GOLDEN_SLOT_SIZE);
+        // The draft's XORs read x0, so the slot holds the destination itself.
+        assert_eq!(site.golden_entry(), Some((3, 0)));
+        assert!(matches!(instrs[6], Instruction::Xor { rs2: XReg::ZERO, .. }));
+
+        // Once resolved, golden ^ a1 ^ a2 must give the destination (0).
+        let mut xregs = [0u64; 32];
+        xregs[XReg::A1.index() as usize] = 0x1234_5678_9abc_def0;
+        xregs[XReg::A2.index() as usize] = 0x0fed_cba9_8765_4321;
+        let target = test_target();
+        site.resolve(&xregs, &target, &mut rand::rngs::StdRng::seed_from_u64(0)).unwrap();
+        site.render(&mut instrs, Xlen::X64).unwrap();
+        let (_, golden) = site.golden_entry().unwrap();
+        assert_eq!(golden ^ xregs[XReg::A1.index() as usize] ^ xregs[XReg::A2.index() as usize], 0);
+        assert!(matches!(instrs[6], Instruction::Xor { rs2: XReg::A1, .. }));
+        assert!(matches!(instrs[5], Instruction::Ld { .. }), "patching must not touch the load");
     }
 
     #[test]

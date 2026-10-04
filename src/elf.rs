@@ -261,6 +261,22 @@ impl<'a> Elf<'a> {
         Ok(())
     }
 
+    /// Overwrite the start of a zero-filled section, e.g. with data patched
+    /// after a Spike run.
+    pub fn fill(&mut self, name: &str, bytes: &[u8]) -> Result<usize> {
+        let index = self
+            .section_index(name)
+            .ok_or_else(|| anyhow!("missing section {name}"))?;
+        let section = &mut self.sections[index];
+        ensure!(
+            name != ".text" && bytes.len() <= section.bytes.len(),
+            "cannot fill {name} with {} bytes",
+            bytes.len()
+        );
+        section.bytes[..bytes.len()].copy_from_slice(bytes);
+        Ok(index)
+    }
+
     /// Sections are only added through [`Elf::new`] and [`Elf::place`] so the
     /// image never drifts from the memory layout.
     fn add_section(&mut self, section: ElfSection) -> Result<usize> {

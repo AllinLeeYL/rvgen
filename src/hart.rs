@@ -3,7 +3,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, RngExt};
 
 use crate::basicblock::BasicBlock;
-use crate::entangle::{SiteBuilder, code_size};
+use crate::entangle::{GOLDEN_SLOT_SIZE, PoolRef, SiteBuilder, code_size};
 use crate::membase::MemBases;
 use crate::orchestrator::GlobalState;
 use crate::riscv::asmutil::{load_imm, load_imm_fixed, twos_complement};
@@ -74,10 +74,20 @@ impl Default for HartState {
     }
 }
 
+/// `.golden` holds the sites' golden values, then, unless the constants are
+/// inline, `_init`'s values and `_check`'s expected values.
 #[derive(Default)]
 pub struct Hart {
     pub bbs: Vec<BasicBlock>,
     state: HartState,
+    /// Golden values the entanglement sites load from `.golden`.
+    site_slots: usize,
+    /// Whether `_init` and `_check` load their constants from `.golden`.
+    pooled: bool,
+    /// Values `_init` writes, see [`init_values`].
+    init_values: Vec<u64>,
+    /// Constants `_check` compares against, see [`check_values`].
+    check_values: Vec<u64>,
 }
 
 impl Hart {
@@ -90,6 +100,7 @@ impl Hart {
                 .enumerate()
                 .map(|(id, budget)| BasicBlock::new(id, rng.random::<bool>(), budget))
                 .collect(),
+            ..Default::default()
         };
         debug_assert_eq!(
             core.bbs.iter().map(|bb| bb.budget).sum::<usize>(),
@@ -99,40 +110,39 @@ impl Hart {
     }
 
     /// Generate the hart's code, drawing each workload block's opcodes from
-    /// the matching entry of `weights` (one per block). With `self_check`, a self-check block holding
+    /// `weights`. With `self_check`, a self-check block holding
     /// placeholder values precedes the exit; patch the reference values in with
     /// [`Hart::set_expected`] before encoding the final program. With
     /// `entangle` (holding the mid-block guard threshold), the workload holds
-    /// entanglement sites; [`Hart::link`] them, then [`Hart::resolve_sites`]
-    /// with Spike's register values.
+    /// entanglement sites; [`Hart::link`] them, then [`Hart::patch_sites_from_spike`]
+    /// with Spike's register values. With `golden_section` (RV64 only), sites,
+    /// `_init` and `_check` load their constants from a `.golden` section of
+    /// [`Hart::golden_slots`] slots, which the caller reserves before linking.
     pub fn run(
         &mut self,
         rng: &mut (impl Rng + ?Sized),
         target: &Target,
         state: &mut GlobalState,
-        weights: &[InstrWeights],
+        weights: &InstrWeights,
         self_check: bool,
         entangle: Option<usize>,
+        golden_section: bool,
     ) -> Result<()> {
-        ensure!(
-            weights.len() == self.bbs.len(),
-            "{} instruction weights for {} basic blocks",
-            weights.len(),
-            self.bbs.len()
-        );
         let sections: Vec<_> = state.memory.data_sections().collect();
         self.state.mem_bases = MemBases::pick(&sections, rng)?;
         let reserved: Vec<_> = self.state.mem_bases.bases.iter().map(|base| base.reg).collect();
         let mut sites =
-            entangle.map(|threshold| SiteBuilder::new(target, threshold, reserved.clone()));
-        for (bb, weights) in self.bbs.iter_mut().zip(weights) {
+            entangle.map(|threshold| SiteBuilder::new(target, threshold, reserved.clone(), golden_section));
+        for bb in self.bbs.iter_mut() {
             bb.run(rng, target, state, &mut self.state, weights, sites.as_mut())?;
         }
+        self.site_slots = sites.as_ref().map_or(0, SiteBuilder::golden_slots);
+        self.pooled = golden_section;
         let tohost = state.memory.get(".tohost")?.region.start;
 
         // Layout of the hart's code and the symbol marking each part:
         //   _start         point mtvec at the handler (entry point)
-        //   _init          randomize registers, then set the memory bases
+        //   _init          randomize registers, the memory bases getting their addresses
         //   _stimulus      workload
         //   _check         (optional) compare all registers against Spike's values
         //   _exit          report the check's verdict (or success) to tohost and spin
@@ -142,18 +152,17 @@ impl Hart {
         // mtvec is set first so a trap anywhere after it terminates the test.
         // `_start` is exported by the ELF encoder for the whole code, so the
         // mtvec block carries no label of its own.
-        let mut init = init_registers(rng, target)?;
-        // The bases overwrite their random values; nothing writes them again.
-        for base in &self.state.mem_bases.bases {
-            init.extend(load_imm(base.reg, base.addr as i64, target.xlen));
-        }
+        self.init_values = init_values(rng, target, &self.state.mem_bases);
+        let mut init = init_block(&self.init_values, target, self.init_slot())?;
+        init.label = Some(INIT_LABEL.into());
         if let Some(first) = self.bbs.first_mut() {
             first.label = Some(STIMULUS_LABEL.into());
         }
         let check = if self_check {
-            self_check_block(&ArchState::default(), target)?
+            self.check_values = check_values(&ArchState::default(), target);
+            check_block(&self.check_values, target, self.check_slot())?
         } else {
-            Vec::new()
+            BasicBlock::default()
         };
         let verdict = if self_check {
             // The check leaves 0 or MISMATCH_EXIT_CODE in x5.
@@ -184,9 +193,9 @@ impl Hart {
             Vec::new()
         };
         let before_handler = code_size(&set_mtvec(0))
-            + code_size(&init)
+            + code_size(&init.instrs)
             + self.bbs.iter().map(|bb| code_size(&bb.instrs)).sum::<usize>()
-            + code_size(&check)
+            + code_size(&check.instrs)
             + code_size(&exit)
             + code_size(&fail);
         let mut padding = Vec::new();
@@ -204,19 +213,11 @@ impl Hart {
                     instrs: set_mtvec(handler_offset as i64).to_vec(),
                     ..Default::default()
                 },
-                BasicBlock {
-                    instrs: init,
-                    label: Some(INIT_LABEL.into()),
-                    ..Default::default()
-                },
+                init,
             ],
         );
         if self_check {
-            self.bbs.push(BasicBlock {
-                instrs: check,
-                label: Some(CHECK_LABEL.into()),
-                ..Default::default()
-            });
+            self.bbs.push(check);
         }
         self.bbs.push(BasicBlock {
             instrs: exit,
@@ -243,22 +244,57 @@ impl Hart {
     }
 
     /// Byte offset of the self-check block from the hart's first instruction.
-    pub fn check_offset(&self) -> Result<usize> {
-        let index = self.check_index()?;
+    pub fn get_self_check_code_offset(&self) -> Result<usize> {
+        let index = self.get_self_check_bb_index()?;
         Ok(self.block_offset(index))
     }
 
-    /// Fix the entanglement sites' code addresses, given that the hart's code
-    /// starts at `text_addr`, and render their placeholders.
-    pub fn link(&mut self, text_addr: u64, xlen: Xlen) -> Result<()> {
-        let Some(fail) = self.label_index(FAIL_LABEL) else {
-            return Ok(());
-        };
-        let fail_addr = text_addr + self.block_offset(fail) as u64;
+    /// Number of constants loaded from `.golden`.
+    pub fn golden_slots(&self) -> usize {
+        self.site_slots + if self.pooled { self.init_values.len() + self.check_values.len() } else { 0 }
+    }
+
+    /// First `.golden` slot of `_init`'s values, if pooled.
+    fn init_slot(&self) -> Option<usize> {
+        self.pooled.then_some(self.site_slots)
+    }
+
+    /// First `.golden` slot of `_check`'s expected values, if pooled.
+    fn check_slot(&self) -> Option<usize> {
+        self.pooled.then_some(self.site_slots + self.init_values.len())
+    }
+
+    /// Contents of the `.golden` section, little endian: each linked site's
+    /// golden value in its slot (zero before linking), then `_init`'s and
+    /// `_check`'s constants if pooled. The draft holds the sites' and
+    /// `_check`'s placeholders.
+    pub fn golden_bytes(&self) -> Vec<u8> {
+        let mut slots = vec![0; self.golden_slots()];
+        for site in self.bbs.iter().flat_map(|bb| &bb.sites) {
+            if let Some((slot, golden)) = site.golden_entry() {
+                slots[slot] = golden;
+            }
+        }
+        if self.pooled {
+            let constants = self.init_values.iter().chain(&self.check_values);
+            slots[self.site_slots..].iter_mut().zip(constants).for_each(|(slot, value)| *slot = *value);
+        }
+        slots.iter().flat_map(|slot| slot.to_le_bytes()).collect()
+    }
+
+    /// Fix the code's addresses, given that it starts at `text_addr` and
+    /// `.golden` at `golden_addr`, and render the sites' placeholders.
+    pub fn link(&mut self, text_addr: u64, golden_addr: Option<u64>, xlen: Xlen) -> Result<()> {
+        let fail_addr = self
+            .label_index(FAIL_LABEL)
+            .map(|fail| text_addr + self.block_offset(fail) as u64);
         let mut block_addr = text_addr;
         for bb in self.bbs.iter_mut() {
+            for pool_ref in &bb.pool_refs {
+                pool_ref.link(&mut bb.instrs, block_addr, golden_addr)?;
+            }
             for site in bb.sites.iter_mut() {
-                site.link(&mut bb.instrs, block_addr, fail_addr)?;
+                site.link(&mut bb.instrs, block_addr, fail_addr, golden_addr)?;
             }
             bb.render_sites(xlen)?;
             block_addr += code_size(&bb.instrs) as u64;
@@ -286,7 +322,7 @@ impl Hart {
 
     /// Patch Spike's register values, one per site in [`Hart::probe_offsets`]
     /// order, into the entanglement sites. Sites keep their sizes.
-    pub fn resolve_sites(
+    pub fn patch_entanglements(
         &mut self,
         states: &[ArchState],
         target: &Target,
@@ -317,172 +353,194 @@ impl Hart {
         self.bbs.iter().position(|bb| bb.label.as_deref() == Some(label))
     }
 
-    /// Replace the self-check's placeholder values with `expected`. The block
-    /// keeps its size, so no other code moves and the register state reaching
-    /// it is unchanged.
-    pub fn set_expected(&mut self, expected: &ArchState, target: &Target) -> Result<()> {
-        let index = self.check_index()?;
-        let instrs = self_check_block(expected, target)?;
-        ensure!(
-            code_size(&instrs) == code_size(&self.bbs[index].instrs),
-            "self-check block changed size while patching"
-        );
-        self.bbs[index].instrs = instrs;
+    /// In the end of the program, there is a segment of self-checking code. 
+    /// This func set the expected values: in `.golden` if pooled, in the code
+    /// otherwise.
+    pub fn set_final_expected_values(&mut self, expected: &ArchState, target: &Target) -> Result<()> {
+        let index = self.get_self_check_bb_index()?;
+        self.check_values = check_values(expected, target);
+        if !self.pooled {
+            let check = check_block(&self.check_values, target, None)?;
+            ensure!(
+                code_size(&check.instrs) == code_size(&self.bbs[index].instrs),
+                "self-check block changed size while patching"
+            );
+            self.bbs[index].instrs = check.instrs;
+        }
         Ok(())
     }
 
-    fn check_index(&self) -> Result<usize> {
+    fn get_self_check_bb_index(&self) -> Result<usize> {
         self.label_index(CHECK_LABEL)
             .ok_or_else(|| anyhow!("hart has no self-check block"))
     }
-
-    // pub fn encode(&self, target: &Target) -> Result<Vec<u8>> {
-    //     let mut bytes = Vec::new();
-    //     for bb in &self.bbs {
-    //         bytes.extend_from_slice(&bb.encode(target)?);
-    //     }
-    //     Ok(bytes)
-    // }
 }
 
-/// Randomize the architectural register state. The CSRs the workload may
-/// access and the FP registers are initialized first because they go through
-/// x5 as scratch; x1-x31 are written last so no scratch value leaks into the
-/// workload. x0 is hardwired to zero.
-fn init_registers(rng: &mut (impl Rng + ?Sized), target: &Target) -> Result<Vec<Instruction>> {
+/// Values `_init` writes: the scratch CSRs, then f0-f31 (with F), then
+/// x1-x31. The memory bases hold their addresses, the rest random values.
+fn init_values(rng: &mut (impl Rng + ?Sized), target: &Target, bases: &MemBases) -> Vec<u64> {
+    let fregs = if target.has(Extension::F) { 32 } else { 0 };
+    let mut values: Vec<_> = (0..target.scratch_csrs().len() + fregs + 31)
+        .map(|_| random_xlen(rng, target.xlen) as u64)
+        .collect();
+    let x1 = values.len() - 31;
+    for base in &bases.bases {
+        values[x1 + base.reg.index() as usize - 1] = base.addr;
+    }
+    values
+}
+
+/// `_init`: write [`init_values`] to the CSRs, FP registers and x1-x31 in
+/// that order, the CSRs and FP registers through x5 when inline, so no scratch
+/// value leaks into the workload. With `pool`, the values are loaded from
+/// `.golden` slots from `pool` on through x31, which is loaded last. x0 is
+/// hardwired to zero.
+fn init_block(values: &[u64], target: &Target, pool: Option<usize>) -> Result<BasicBlock> {
+    use Instruction::*;
+    const PTR: XReg = XReg::X31;
     let xlen = target.xlen;
-    let mut instrs = Vec::new();
+    let mut block = BasicBlock::default();
+    if let Some(slot) = pool {
+        let pointer = PoolRef { at: 0, rd: PTR, slot, load: false };
+        block.instrs.extend(pointer.instrs(0));
+        block.pool_refs.push(pointer);
+    }
+    let offset = |k: usize| (k as u64 * GOLDEN_SLOT_SIZE) as i32;
+    // rd = values[k]
+    let load = |rd: XReg, k: usize| match pool {
+        Some(_) => vec![Ld { rd, rs1: PTR, imm: offset(k) }],
+        None => load_imm(rd, values[k] as i64, xlen),
+    };
+    let mut ks = 0..values.len();
     // Scratch CSRs are plain XLEN-wide read/write registers, so any value is legal.
     for csr in target.scratch_csrs() {
-        instrs.extend(load_imm(XReg::X5, random_xlen(rng, xlen), xlen));
-        instrs.push(Instruction::Csrrw {
-            rd: XReg::ZERO,
-            rs1: XReg::X5,
-            csr,
-        });
+        block.instrs.extend(load(XReg::X5, ks.next().expect("a CSR value")));
+        block.instrs.push(Csrrw { rd: XReg::ZERO, rs1: XReg::X5, csr });
     }
     if target.has(Extension::F) {
         // Enable the FPU: set both mstatus.FS bits (Dirty) with CSRRS so the
         // other mstatus fields are preserved.
-        instrs.push(Instruction::Lui {
+        block.instrs.push(Lui {
             rd: XReg::X5,
             imm: 0x6, // 0x6000 = 0b11 << 13 (mstatus.FS)
         });
-        instrs.push(Instruction::Csrrs {
-            rd: XReg::ZERO,
-            rs1: XReg::X5,
-            csr: Csr::MSTATUS,
-        });
+        block.instrs.push(Csrrs { rd: XReg::ZERO, rs1: XReg::X5, csr: Csr::MSTATUS });
         // frm = RNE (round to nearest, ties to even), fflags = 0.
-        instrs.push(Instruction::Csrrw {
-            rd: XReg::ZERO,
-            rs1: XReg::ZERO,
-            csr: Csr::FCSR,
-        });
-        // FMV.D.X moves a full 64-bit pattern but only exists on RV64D;
-        // otherwise FMV.W.X writes a random (NaN-boxed) single.
-        let wide = xlen == Xlen::X64 && target.has(Extension::D);
+        block.instrs.push(Csrrw { rd: XReg::ZERO, rs1: XReg::ZERO, csr: Csr::FCSR });
+        // A 64-bit pattern with D (FLD or FMV.D.X, which only exists on RV64D);
+        // otherwise a random (NaN-boxed) single from the low 32 bits.
+        let wide = target.has(Extension::D);
         for index in 0..32 {
             let rd = FReg::new(index)?;
-            instrs.extend(load_imm(XReg::X5, random_xlen(rng, xlen), xlen));
-            instrs.push(if wide {
-                Instruction::FmvDX { rd, rs1: XReg::X5 }
+            let k = ks.next().expect("an FP value");
+            if pool.is_some() {
+                let imm = offset(k);
+                block.instrs.push(if wide { Fld { rd, rs1: PTR, imm } } else { Flw { rd, rs1: PTR, imm } });
             } else {
-                Instruction::FmvWX { rd, rs1: XReg::X5 }
-            });
+                block.instrs.extend(load(XReg::X5, k));
+                block.instrs.push(if wide && xlen == Xlen::X64 {
+                    FmvDX { rd, rs1: XReg::X5 }
+                } else {
+                    FmvWX { rd, rs1: XReg::X5 }
+                });
+            }
         }
     }
-    for index in 1..32 {
-        instrs.extend(load_imm(XReg::new(index)?, random_xlen(rng, xlen), xlen));
+    for (index, k) in (1..32).zip(ks) {
+        block.instrs.extend(load(XReg::new(index)?, k));
     }
-    Ok(instrs)
+    Ok(block)
 }
 
-/// Compare every register with `expected` and leave the verdict in x5: 0 on a
-/// match, [`MISMATCH_EXIT_CODE`] otherwise. The workload may use every
-/// register, so none is reserved: x31 is stashed in mscratch to serve as the
-/// first scratch register, x1 becomes the accumulator once checked, and each
-/// register checked is free to reuse afterwards. Constants are loaded with
-/// [`load_imm_fixed`] so the block's size does not depend on `expected`.
-fn self_check_block(expected: &ArchState, target: &Target) -> Result<Vec<Instruction>> {
+/// Constants `_check` compares x1-x31, then f0-f31 (with F), against.
+/// FMV.X.D moves all 64 bits but only exists on RV64D; otherwise FMV.X.W
+/// moves the low 32 bits, sign-extended to XLEN.
+fn check_values(expected: &ArchState, target: &Target) -> Vec<u64> {
+    let xlen = target.xlen;
+    let mut values: Vec<_> = expected.xregs[1..]
+        .iter()
+        .map(|value| twos_complement(*value, xlen) as u64)
+        .collect();
+    if target.has(Extension::F) {
+        let wide = xlen == Xlen::X64 && target.has(Extension::D);
+        values.extend(expected.fregs.iter().map(|raw| {
+            if wide { *raw } else { *raw as u32 as i32 as i64 as u64 }
+        }));
+    }
+    values
+}
+
+/// `_check`: compare every register with [`check_values`] and leave the
+/// verdict in x5: 0 on a match, [`MISMATCH_EXIT_CODE`] otherwise. The
+/// workload may use every register, so none is reserved: x31 is stashed in
+/// mscratch to serve as the first scratch register, x1 becomes the accumulator
+/// once checked, and each register checked is free to reuse afterwards. Inline
+/// constants are loaded with [`load_imm_fixed`] so the block's size does not
+/// depend on them. With `pool`, they are loaded from `.golden` slots from
+/// `pool` on, through x2 once it is checked.
+fn check_block(values: &[u64], target: &Target, pool: Option<usize>) -> Result<BasicBlock> {
     use Instruction::*;
     const ACC: XReg = XReg::X1;
     const TMP: XReg = XReg::X31;
+    const PTR: XReg = XReg::X2;
     let xlen = target.xlen;
-    let xval = |index: usize| twos_complement(expected.xregs[index], xlen);
 
-    // acc |= value ^ constant, with `scratch` holding the constant.
-    let fold = |value: XReg, scratch: XReg, constant: i64| {
-        let mut seq = load_imm_fixed(scratch, constant, xlen);
-        seq.push(Xor {
-            rd: scratch,
-            rs1: scratch,
-            rs2: value,
-        });
-        seq.push(Or {
-            rd: ACC,
-            rs1: ACC,
-            rs2: scratch,
-        });
-        seq
+    // rd = values[k]
+    let load = |block: &mut BasicBlock, rd: XReg, k: usize| match pool {
+        None => block.instrs.extend(load_imm_fixed(rd, values[k] as i64, xlen)),
+        // x1's and x2's are loaded before x2 is free to point at the pool.
+        Some(slot) if k < 2 => {
+            let direct = PoolRef { at: block.instrs.len(), rd, slot: slot + k, load: true };
+            block.instrs.extend(direct.instrs(0));
+            block.pool_refs.push(direct);
+        }
+        Some(_) => block.instrs.push(Ld {
+            rd,
+            rs1: PTR,
+            imm: (k as u64 * GOLDEN_SLOT_SIZE) as i32,
+        }),
+    };
+    // acc |= value ^ values[k], with `scratch` holding the constant.
+    let fold = |block: &mut BasicBlock, value: XReg, scratch: XReg, k: usize| {
+        load(block, scratch, k);
+        block.instrs.push(Xor { rd: scratch, rs1: scratch, rs2: value });
+        block.instrs.push(Or { rd: ACC, rs1: ACC, rs2: scratch });
     };
 
-    let mut instrs = vec![Csrrw {
-        rd: XReg::ZERO,
-        rs1: TMP,
-        csr: Csr::MSCRATCH,
-    }];
-    instrs.extend(load_imm_fixed(TMP, xval(1), xlen));
-    instrs.push(Xor {
-        rd: ACC,
-        rs1: ACC,
-        rs2: TMP,
-    });
-    for index in 2..31 {
-        instrs.extend(fold(XReg::new(index as u8)?, TMP, xval(index)));
+    let mut block = BasicBlock {
+        label: Some(CHECK_LABEL.into()),
+        ..Default::default()
+    };
+    block.instrs.push(Csrrw { rd: XReg::ZERO, rs1: TMP, csr: Csr::MSCRATCH });
+    load(&mut block, TMP, 0);
+    block.instrs.push(Xor { rd: ACC, rs1: ACC, rs2: TMP });
+    fold(&mut block, XReg::X2, TMP, 1);
+    if let Some(slot) = pool {
+        let pointer = PoolRef { at: block.instrs.len(), rd: PTR, slot, load: false };
+        block.instrs.extend(pointer.instrs(0));
+        block.pool_refs.push(pointer);
     }
-    // Restore x31 and check it with x2, which is free by now.
-    instrs.push(Csrrw {
-        rd: TMP,
-        rs1: XReg::ZERO,
-        csr: Csr::MSCRATCH,
-    });
-    instrs.extend(fold(TMP, XReg::X2, xval(31)));
+    for index in 3..31 {
+        fold(&mut block, XReg::new(index)?, TMP, index as usize - 1);
+    }
+    // Restore x31 and check it with x3, which is free by now.
+    block.instrs.push(Csrrw { rd: TMP, rs1: XReg::ZERO, csr: Csr::MSCRATCH });
+    fold(&mut block, TMP, XReg::X3, 30);
 
     if target.has(Extension::F) {
-        // FMV.X.D moves all 64 bits but only exists on RV64D; otherwise
-        // FMV.X.W moves the low 32 bits, sign-extended to XLEN.
         let wide = xlen == Xlen::X64 && target.has(Extension::D);
         for index in 0..32 {
-            let rs1 = FReg::new(index as u8)?;
-            instrs.push(if wide {
-                FmvXD { rd: TMP, rs1 }
-            } else {
-                FmvXW { rd: TMP, rs1 }
-            });
-            let raw = expected.fregs[index];
-            let constant = if wide { raw as i64 } else { raw as u32 as i32 as i64 };
-            instrs.extend(fold(TMP, XReg::X2, constant));
+            let rs1 = FReg::new(index)?;
+            block.instrs.push(if wide { FmvXD { rd: TMP, rs1 } } else { FmvXW { rd: TMP, rs1 } });
+            fold(&mut block, TMP, XReg::X3, 31 + index as usize);
         }
     }
 
     // x5 = acc != 0 ? MISMATCH_EXIT_CODE : 0, without a branch.
-    instrs.push(Sltu {
-        rd: XReg::X5,
-        rs1: XReg::ZERO,
-        rs2: ACC,
-    });
-    instrs.push(Sub {
-        rd: XReg::X5,
-        rs1: XReg::ZERO,
-        rs2: XReg::X5,
-    });
-    instrs.push(Andi {
-        rd: XReg::X5,
-        rs1: XReg::X5,
-        imm: MISMATCH_EXIT_CODE,
-    });
-    Ok(instrs)
+    block.instrs.push(Sltu { rd: XReg::X5, rs1: XReg::ZERO, rs2: ACC });
+    block.instrs.push(Sub { rd: XReg::X5, rs1: XReg::ZERO, rs2: XReg::X5 });
+    block.instrs.push(Andi { rd: XReg::X5, rs1: XReg::X5, imm: MISMATCH_EXIT_CODE });
+    Ok(block)
 }
 
 /// Point mtvec (direct mode) at `offset` bytes from the first instruction of

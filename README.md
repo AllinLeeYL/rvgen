@@ -48,6 +48,9 @@ Configure a batch of programs:
 - `--guard-threshold`: also place a guard mid-block once this many
   workload-written registers are unchecked (default: `8`); `0` guards at block
   ends only.
+- `--inline-golden`: build the code's constants (sites' golden values,
+  `_init`'s values, `_check`'s expected values) inline instead of loading them
+  from `.golden` (see below). RV32 always does this.
 - `--weight OPCODE=W`, `--class-weight CLASS=W`, `--default-weight W`: the
   instruction mix, see [Instruction weights](#instruction-weights).
 - `--seed`: makes generation reproducible (default: random). `many` uses
@@ -134,12 +137,16 @@ target:
 | Symbol | Contents |
 |---|---|
 | `_start` | entry point; points `mtvec` at `_trap_handler` |
-| `_init` | randomizes CSRs, FP registers, then x1-x31, then sets the memory base registers |
+| `_init` | randomizes CSRs, FP registers, then x1-x31, the memory base registers getting their addresses |
 | `_stimulus` | the random workload (all basic blocks) |
 | `_check` | the self-check (omitted with `--no-self-check`) |
 | `_exit` | reports the verdict to `tohost` and spins |
 | `_fail` | reports a control-flow divergence to `tohost` and spins (omitted with `--no-entangle`) |
 | `_trap_handler` | reports `mcause + 1` to `tohost` and spins |
+
+The `.golden` data section, exported as the `_golden` object symbol, holds the
+constants the code loads (RV64 only): the entanglement sites' golden values,
+then `_init`'s values and `_check`'s expected values.
 
 ## Memory accesses
 
@@ -168,18 +175,20 @@ needs to observe one `tohost` write: no register dump, commit log, or custom
 testbench. Generation runs in two passes:
 
 1. Generate the program with a `_check` block whose expected values are
-   placeholders. The block loads every constant with a fixed-length sequence,
-   so its size does not depend on the values.
+   placeholders. The block loads every constant from `.golden`, or inline
+   with a fixed-length sequence, so its size does not depend on the values.
 2. Run Spike until `_check` and read x1-x31 (and f0-f31 with F), stopping
    at each entanglement site on the way to read its registers.
-3. Patch those values into the sites and `_check`. No code moves, so the
-   state reaching each of them is unchanged.
+3. Patch those values into the sites and `_check` (into `.golden` on RV64).
+   No code moves, so the state reaching each of them is unchanged.
 4. Run the final program on Spike and require it to pass.
 
 `_check` XORs each register with its expected value and ORs the differences
 into one accumulator. Since the workload may use every register, x31 is
 stashed in `mscratch` as the first scratch register, x1 becomes the
-accumulator once checked, and checked registers are reused afterwards. FP
+accumulator once checked, and checked registers are reused afterwards; from
+`.golden`, x2 then points at the expected values, so each register costs an
+`ld`, an `xor` and an `or`. FP
 registers are compared through `fmv.x.d` (RV64D) or `fmv.x.w` (low 32 bits
 otherwise). The verdict is computed without branches and reported to `tohost`
 as an HTIF exit code:
@@ -203,25 +212,39 @@ workload's integer results also steer the program while it runs, after
 diverges within a few instructions instead of carrying on silently. Generation
 inserts sites (`src/entangle.rs`) with placeholder constants, and one Spike
 run reports the registers at every site in program order; the constants are
-then patched in place like `_check`'s.
+then patched in place like `_check`'s. The constant a value site starts from
+is its *golden value*, decided by Spike, the golden model.
 
 | Site | Code | Catches a wrong value by |
 |---|---|---|
 | branch | `b<cc> r1, r2, +8; jal _fail` (`cc` chosen from Spike's values) | going the wrong way |
-| indirect jump | `rt = K; rt ^= r1; ...; jalr rd, rt; jal _fail` | jumping to a wrong target |
-| guard | `acc = K; acc ^= r1; ...; acc ^= rk; beq/bne acc, x0; jal _fail` | any difference, exactly |
+| indirect jump | `rt = golden; rt ^= r1; ...; jalr rd, rt; jal _fail` | jumping to a wrong target |
+| guard | `acc = golden; acc ^= r1; ...; acc ^= rk; beq/bne acc, x0; jal _fail` | any difference, exactly |
 
 Every block ends with an optional branch or indirect jump (50%) and a guard.
 Every memory access gets an address site (replacing the plain base load),
 and the workload's weighted draws of branches and `jalr` become branch and
 jump sites wherever they fall in a block (see
 [Instruction weights](#instruction-weights)).
-`K` is patched to the target XORed with the `ri`'s expected values (0 for a
+The golden value is the target XORed with the `ri`'s expected values (0 for a
 guard), and branch opcodes are picked so the planned direction holds. Sites
 use *fresh* registers, those the workload wrote since the last guard: branch
 and jump sites peek at the freshest few, and guards consume them all. Memory
 accesses are not sites (see [Memory accesses](#memory-accesses)); a
 data-dependent address is fresh, so the next guard checks it.
+
+On RV64, `x = golden` is `auipc x, %hi(slot); ld x, %lo(slot)(x)`: each value
+site reads its own 8-byte slot of `.golden`, a section reserved below the
+workload's data and never targeted by its accesses. Only the slot is patched
+after the Spike run; the two instructions are fixed once the code is linked.
+`_init` and `_check` likewise point a register at their own slots with
+`auipc; addi` and load one constant per register. Built inline instead
+(`--inline-golden`, and always on RV32), a golden or expected value takes
+`load_imm_fixed`'s 8 instructions on RV64 (2 on RV32). For 100 default
+programs (seeds 1000–1099), loading cuts the dynamic length from 3404 to 2272
+instructions. With only the sites' values loaded, `scripts/inject_faults.py`
+caught the same faults (79.1% vs 79.2% of 300 paired mutants). The table below
+predates `.golden`.
 
 Measured with `scripts/inject_faults.py` (flip one `add`/`sub`/`addi`/`xori`/
 `ori` in `_stimulus`, 200 mutants over 50 RV64IM programs of 1000
@@ -265,9 +288,12 @@ Use `./target/release/rvgen --help`, `one --help`, or `many --help` to inspect t
 
 `Orchestrator` owns the fixed target, per-core basic blocks, shared mutable state,
 and RNG. The CLI reserves 8-byte `.tohost` and `.fromhost` sections aligned to
-64 bytes, scratch, and optional SMC memory at the top of RAM and places core 0's generated code at the RAM base. `Elf::new(&target).encode(bbs,
+64 bytes, scratch, and optional SMC memory at the top of RAM, then `.golden`
+below them once generation knows how many constants the code loads, and
+places core 0's generated code at the RAM base. `Elf::new(&target).encode(bbs,
 &memory)` preserves the supplied instruction order, section addresses, sizes,
-alignment, and permissions. Other supplied sections are zero-filled. The ELF
+alignment, and permissions. Other supplied sections are zero-filled until
+filled with `Elf::fill` (as `.golden` is). The ELF
 encoder exports `tohost` and `fromhost` symbols for their supplied sections.
 
 Startup, register initialization (including the memory base registers), trap

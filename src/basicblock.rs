@@ -1,4 +1,4 @@
-use crate::entangle::{Site, SiteBuilder, written_xreg};
+use crate::entangle::{PoolRef, Site, SiteBuilder, written_xreg};
 use crate::hart::HartState;
 use crate::orchestrator::GlobalState;
 use crate::riscv::asmutil::{csr_rd_and_addr, with_csr};
@@ -19,6 +19,8 @@ pub struct BasicBlock {
     pub label: Option<String>,
     /// Entanglement sites within `instrs`, in program order.
     pub sites: Vec<Site>,
+    /// References to `.golden` within `instrs` outside of sites.
+    pub pool_refs: Vec<PoolRef>,
 }
 
 impl BasicBlock {
@@ -30,6 +32,7 @@ impl BasicBlock {
             instrs: Vec::with_capacity(budget),
             label: None,
             sites: Vec::new(),
+            pool_refs: Vec::new(),
         }
     }
 

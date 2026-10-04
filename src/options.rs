@@ -1,5 +1,5 @@
 use crate::riscv::{Extension, InstructionClass, Opcode, PrivilegeLevel, Xlen};
-use crate::weights::WeightSpec;
+use crate::weights::InstrWeights;
 use clap::{Args, Parser};
 use std::fmt::Display;
 use std::str::FromStr;
@@ -62,6 +62,14 @@ pub struct CommonOpts {
     #[arg(long, default_value = "8")]
     pub guard_threshold: usize,
 
+    /// Materialize the code's constants inline instead of loading them from
+    /// the `.golden` data section: each entanglement site's golden value (its
+    /// Spike-decided constant) and `_check`'s expected values with an
+    /// 8-instruction sequence, `_init`'s values with up to 8. RV32 always does
+    /// this.
+    #[arg(long)]
+    pub inline_golden: bool,
+
     /// Spike executable that computes the self-check's expected values.
     #[arg(long, default_value = "spike")]
     pub spike: String,
@@ -104,11 +112,11 @@ impl Default for CommonOpts {
 }
 
 impl CommonOpts {
-    pub fn weight_spec(&self) -> WeightSpec {
-        WeightSpec {
+    pub fn instr_weights(&self) -> InstrWeights {
+        InstrWeights {
             default: self.default_weight,
-            classes: self.class_weights.clone(),
-            opcodes: self.opcode_weights.clone(),
+            classes: self.class_weights.iter().copied().collect(),
+            opcodes: self.opcode_weights.iter().copied().collect(),
         }
     }
 }
