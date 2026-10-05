@@ -48,6 +48,17 @@ pub struct CommonOpts {
     #[arg(long, default_value = "8")]
     pub pmp_regions: usize,
 
+    // `medeleg` bits the device under test delegates (e.g. `0xb15d`); traps
+    // from S and U are only routed to S through these (and those Spike
+    // delegates too). 0 sends every trap to M.
+    #[arg(long, default_value = "0", value_parser = parse_address)]
+    pub medeleg_mask: u64,
+
+    // The device traps on misaligned loads and stores, so the generator may
+    // raise them on purpose.
+    #[arg(long)]
+    pub misaligned_traps: bool,
+
     // Disable specific instructions
     #[arg(long, default_value = "wfi,lr.w,lr.d", value_delimiter = ',')]
     pub disabled_instrs: Vec<Opcode>,

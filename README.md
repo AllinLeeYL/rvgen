@@ -42,7 +42,13 @@ Configure a batch of programs:
   log-uniformly between 4 KiB and 1 MiB, see [Memory accesses](#memory-accesses)).
 - `--smc-size`: SMC section size in bytes (default: `8192`); zero omits it.
 - `--pmp-regions`: PMP entries the target implements, at most 16 (default:
-  `8`); `_init` configures them (see [CSRs](#csrs)). `0` leaves PMP untouched.
+  `8`); `_init` configures them (see [CSRs](#csrs)), and Spike runs with as
+  many. `0` leaves PMP untouched.
+- `--medeleg-mask`: `medeleg` bits the device delegates (default: `0`, every
+  trap goes to M); see [Privilege modes](#privilege-modes). Only bits Spike
+  delegates too take effect the same on both; a mismatch fails generation.
+- `--misaligned-traps`: the device traps on misaligned loads and stores, so
+  they are raised on purpose (default: off).
 - `-o`, `--output`: output file for `one` (default: `rvprog.elf`) or
   output directory for `many` (default: `rvprogs`).
 - `--spike`: Spike executable used for the self-check (default: `spike`).
@@ -68,7 +74,7 @@ sum to the requested instruction count for each core.
 
 The blocks are scattered at random over a code area at the RAM base, sized
 per program log-uniformly between four times the code (at least 16 KiB) and
-1 MiB, as in Cascade. All other code (`_start` to `_trap_handler`) sits back
+1 MiB, as in Cascade. All other code (`_start` to the trap handlers) sits back
 to back at its start. The bytes between blocks are random, so fetches down a
 mispredicted path decode junk. Each block runs once and ends with a way to
 the next one in execution order, wherever it is placed:
@@ -177,13 +183,14 @@ target:
 
 | Symbol | Contents |
 |---|---|
-| `_start` | entry point; points `mtvec` at `_trap_handler` |
+| `_start` | entry point; points `mtvec` at `_trap_handler` (and `stvec` at `_strap_handler` with S) |
 | `_init` | enables the FPU, randomizes CSRs (see [CSRs](#csrs)), FP registers, then x1-x31, the memory base registers getting their addresses |
 | `_stimulus` | the random workload's first block (the others are unlabeled, see [Control flow](#control-flow)) |
 | `_check` | the self-check (omitted with `--no-self-check`) |
 | `_exit` | reports the verdict to `tohost` and spins |
-| `_fail` | reports a control-flow divergence to `tohost` and spins (omitted with `--no-entangle`) |
+| `_fail` | reports a control-flow divergence to `tohost` and spins |
 | `_trap_handler` | reports `mcause + 1` to `tohost` and spins |
+| `_strap_handler` | (with S) reports `scause + 0x101` to `tohost` and spins |
 
 The `.golden` data section, exported as the `_golden` object symbol, holds the
 constants the code loads (RV64 only): the entanglement sites' golden values,
@@ -191,14 +198,17 @@ then `_init`'s values and `_check`'s expected values.
 
 ## CSRs
 
-The hart runs the whole program in M-mode, and no CSR access changes what an
-M-mode instruction does (`src/csrs.rs`). Generated code never writes
-`mstatus` (beyond `_init` setting `FS`), `mtvec`, `misa`, `satp`, the
-interrupt enables and pendings, or the debug triggers, and never locks a PMP
-entry, which would also bind M-mode. A CSR is only touched when the target
-has what it belongs to: `sscratch`, `stvec`, `sepc`, `scause`, `stval`,
-`scounteren`, `medeleg` and `mideleg` need S; `mcounteren` needs U; `fflags`,
-`frm` and `fcsr` need F.
+No CSR access changes what an M-mode instruction does (`src/csrs.rs`).
+Generated code never writes `misa`, `satp`, `mip`, the debug triggers or a PMP
+entry's lock bit, which would also bind M-mode; `mtvec`, `stvec`, `mstatus`
+and `medeleg` belong to the [privilege switches](#privilege-modes). `_init`
+writes `mie` = 0, so no interrupt fires, and clears `mstatus`'s interrupt
+enables, previous modes, `MPRV`, `SUM`, `MXR`, `TVM`, `TW` and `TSR`. A CSR is
+only touched when the target has what it belongs to: `sscratch`, `stvec`,
+`sepc`, `scause`, `stval`, `scounteren`, `medeleg` and `mideleg` need S;
+`mcounteren` needs U; `fflags`, `frm` and `fcsr` need F. The workload only
+accesses CSRs its current mode may access, and the FP ones only with the FPU
+on.
 
 `_init` writes, with random values:
 
@@ -208,17 +218,61 @@ has what it belongs to: `sscratch`, `stvec`, `sepc`, `scause`, `stval`,
 | `fcsr` | `frm` in 0–4 (RNE…RMM), random `fflags` |
 | `mcountinhibit`, `mcycle`, `minstret`, `mepc`, `mcause`, `mtval` | any |
 | a random subset of `mhpmevent3`–`31` with their `mhpmcounter` | event set 0–3 in the low byte, random mask above; any |
-| `mcounteren` (U), `medeleg`, `mideleg`, `stvec`, `sepc`, `scause`, `stval`, `scounteren` (S) | any |
-| `pmpaddr`/`pmpcfg` of each `--pmp-regions` entry | entry 0 NAPOT over all memory with RWX, so S and U could run; the others random, never locked, never write-without-read |
+| `mcounteren` (U), `mideleg`, `sepc`, `scause`, `stval`, `scounteren` (S) | any |
+| `medeleg` (S) | random within `--medeleg-mask` (see [Privilege modes](#privilege-modes)) |
+| `pmpaddr`/`pmpcfg` of each `--pmp-regions` entry | never locked, never write-without-read. With U: the PMP window's regions, then random entries over addresses below RAM, then the last NAPOT over all memory with RWX, so S and U reach everything else. M only: entry 0 NAPOT over all memory, the others random |
 
 The workload's CSR instructions draw from the same CSRs, except the PMP
-configurations. Reads are compared against Spike only for the CSRs that read
+configurations, and with U also `stvec`, `medeleg` and the PMP addresses. Reads are compared against Spike only for the CSRs that read
 back as written on any correct core: `mscratch`, `sscratch`, `fflags`, `frm`
 and `fcsr`. Any other read is followed by an instruction overwriting its
 destination, as a WARL field or a counter may read differently on the device.
 Writes to `frm` and `fcsr` are rewritten so the rounding mode stays legal:
 register writes become `csrrc`, `csrrwi frm` takes 0–4, and `csrrsi frm`
 becomes `csrrci`.
+
+## Privilege modes
+
+With U (and S) in `--priv`, the hart switches among M, S and U, after Cascade
+(`src/privilege.rs`). A switch ends a block outside any call, and its next
+block runs in the new mode, so each block still runs once, in order:
+
+| Switch | Code | Next block |
+|---|---|---|
+| descent (M→M/S/U by `mret`; M→S/U and S→S/U by `sret`) | set MPP/SPP; `rt = golden ^ r1 ^ ...; csrw mepc/sepc, rt`; `xret`; `jal _fail` | runs in the new mode |
+| trap | the handling mode's vector points at the next block; the trapping instruction; `jal _fail` | a *landing*: restores the vector to its handler, then reads `xcause` and `xepc` (checked) and maybe `xtval` (overwritten) |
+
+A mode can only write its own vector, so leaving M arms `mtvec` with the
+landing of the trap that eventually returns to M, entering U arms `stvec` too
+for traps `medeleg` hands to S, and a trap handled in the current mode arms
+that mode's vector right before, in vectored mode at a per-program rate
+(exceptions still go to BASE, but some cores ignore BASE's low bits then, so
+those landings are 256-byte aligned). The vectors and exception PCs are value
+sites, entangled like `jalr` targets. A landing's cause and exception PC fold into the
+next guard: a trap that comes early, late or from the wrong instruction lands
+with values Spike did not see. A disarmed vector points at the mode's sink
+handler, so any unplanned trap ends the test. Before `_check`, the program
+traps back to M (`ecall` from S is never delegated) and switches the FPU on.
+
+Traps raised on purpose, where the mode and target allow:
+
+| Cause | Instruction |
+|---|---|
+| `ecall` from U/S/M | `ecall` |
+| breakpoint | `ebreak`, `c.ebreak` |
+| illegal instruction | an all-zero word; a write to `cycle`; below M: `mret`, reading `mscratch`/`mstatus`; in U: `sret`, reading `sscratch`/`sepc`; in S with `TSR`: `sret`; in S with `TVM`: `sfence.vma`, reading `satp`; with the FPU off: `fadd.s`, reading `fcsr` |
+| misaligned load/store | `lh`/`lw`/`ld`/`sh`/`sw`/`sd` at an odd address in a data section (`--misaligned-traps`) |
+| misaligned fetch | `jal` 2 bytes ahead (without C) |
+| load/store/fetch access fault | in S/U, `lw`/`sw`/`jalr` into a PMP window region without R/W/X |
+
+Traps from S and U go to S when `medeleg` delegates their cause: `_init` and
+later switches write random values within `--medeleg-mask`. The PMP window is
+up to 4 private 4 KiB regions (`pmpwin`, one per spare PMP entry) whose
+entries hold random permissions, below the entry giving S and U all memory.
+Other switches, at block ends: switch the FPU off or back on (`mstatus.FS`,
+`sstatus.FS` in S; the workload then draws no FP instruction), toggle
+`mstatus.TSR` and `mstatus.TVM`, or rewrite `medeleg`. Each program draws how
+often blocks switch, how often a switch descends, and each cause's weight.
 
 ## Memory accesses
 
@@ -274,7 +328,8 @@ as an HTIF exit code:
 | 0 | all registers match Spike |
 | 170 (`0xaa`) | at least one register mismatches |
 | 171 (`0xab`) | an entangled branch or jump went the wrong way |
-| `mcause + 1` | the program trapped |
+| `mcause + 1` | the program trapped unexpectedly to M |
+| `scause + 0x101` | the program trapped unexpectedly to S |
 
 Memory contents are not checked. Only core 0's program is packaged and
 checked.
@@ -353,6 +408,7 @@ Use `./target/release/rvgen --help`, `one --help`, or `many --help` to inspect t
 - `src/orchestrator.rs`: per-core workload planning and basic-block allocation.
 - `src/target.rs`: fixed ISA configuration and instruction selection policy.
 - `src/csrs.rs`: which CSRs `_init` and the workload access, and how.
+- `src/privilege.rs`: switching among M, S and U, traps and their landings.
 - `src/memory.rs`: allocated sections and memory access bounds.
 - `src/elf.rs`: ELF serialization from basic blocks, memory layout, and target.
 - `src/hart.rs`: per-hart init, self-check, exit, fail, and trap-handler code.

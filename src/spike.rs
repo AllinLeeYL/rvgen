@@ -31,6 +31,7 @@ pub struct Spike {
     isa: String,
     privileges: String,
     memory: String,
+    pmp_regions: usize,
     has_fpu: bool,
 }
 
@@ -42,6 +43,7 @@ impl Spike {
             isa: target.spike_isa(),
             privileges: target.spike_priv(),
             memory: format!("-m{:#x}:{:#x}", ram.start, ram.size),
+            pmp_regions: target.pmp_regions,
             has_fpu: target.has(Extension::F),
         }
     }
@@ -104,6 +106,9 @@ impl Spike {
             .arg(format!("--isa={}", self.isa))
             .arg(format!("--priv={}", self.privileges))
             .arg(&self.memory)
+            // As many PMP entries as the device, so S and U see the same
+            // permissions: with none, all memory is accessible.
+            .arg(format!("--pmpregions={}", self.pmp_regions))
             .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

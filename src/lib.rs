@@ -20,6 +20,7 @@ mod elf;
 mod entangle;
 mod hart;
 mod membase;
+mod privilege;
 pub mod memory;
 pub mod options;
 pub mod orchestrator;

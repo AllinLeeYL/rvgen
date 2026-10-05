@@ -23,7 +23,10 @@
 //!   among its `dep_i`.
 //! - A *jump* site ends a block with `jal rd` or `c.j` to the next block.
 //! - A *link* site points `rd` at the next block (`auipc; addi`), so a `ret`
-//!   lands there.
+//!   lands there, or at a landing block (see [`Dest::Landing`]).
+//! - A *leave* site marks where control must have left the block, through a
+//!   trap or an `xret` (see [`crate::privilege`]): falling through reaches
+//!   `_fail`.
 //!
 //! Branch and jump sites only peek at workload registers; guards consume
 //! them, so every register the workload writes is checked by the next guard
@@ -35,6 +38,8 @@
 //! renders a placeholder that follows the planned path without depending on
 //! the workload's values (the draft Spike runs); the register state at every
 //! site is the same in the draft and in the final program.
+use std::collections::HashMap;
+
 use anyhow::{Result, anyhow, ensure};
 use rand::distr::{Distribution, weighted::WeightedIndex};
 use rand::{Rng, RngExt};
@@ -107,6 +112,25 @@ pub enum Dest {
     /// The first instruction of the next block in execution order. Resolved
     /// to an address by [`Site::link`].
     Next,
+    /// The block carrying landing key `key` (see `BasicBlock::landing`), which
+    /// a later trap enters through an armed trap vector; the one carrying
+    /// `fallback` (a trap handler) if no block took that key, as when the
+    /// vector is disarmed before any trap uses it.
+    Landing { key: usize, fallback: usize },
+}
+
+impl Dest {
+    fn resolve(self, next_addr: Option<u64>, landings: &HashMap<usize, u64>) -> Result<u64> {
+        match self {
+            Dest::Data(value) => Ok(value),
+            Dest::Next => next_addr.ok_or_else(|| anyhow!("site jumps to the next block, which is missing")),
+            Dest::Landing { key, fallback } => landings
+                .get(&key)
+                .or_else(|| landings.get(&fallback))
+                .copied()
+                .ok_or_else(|| anyhow!("no block carries landing key {key} or {fallback}")),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -145,9 +169,12 @@ pub enum Kind {
     /// `jal rd, next`, or `c.j next` if `compressed`; `offset` is set by
     /// [`Site::link`].
     Jump { rd: XReg, compressed: bool, offset: i32 },
-    /// `auipc rd; addi rd`, pointing `rd` at the next block; `offset` is set
-    /// by [`Site::link`].
-    Link { rd: XReg, offset: i32 },
+    /// `auipc rd; addi rd`, pointing `rd` at `dest` (never [`Dest::Data`]);
+    /// `offset` is set by [`Site::link`].
+    Link { rd: XReg, offset: i32, dest: Dest },
+    /// Control has left the block through a trap or an `xret` by the
+    /// instruction at `at`; only `fail_at` follows.
+    Leave,
 }
 
 /// One entanglement site inside a basic block's instructions.
@@ -180,7 +207,7 @@ impl Site {
                 Some(self.at + Self::producer_len(xlen, golden_slot.is_some()))
             }
             Kind::Branch { .. } => Some(self.at),
-            Kind::Guard { .. } | Kind::Jump { .. } | Kind::Link { .. } => None,
+            Kind::Guard { .. } | Kind::Jump { .. } | Kind::Link { .. } | Kind::Leave => None,
         }
     }
 
@@ -206,9 +233,10 @@ impl Site {
 
     /// Fix code addresses: `block_addr` is the absolute address of the
     /// block's first instruction, `next_addr` that of the next block in
-    /// execution order, `fail_addr` that of `_fail` and `golden_addr` that of
-    /// the `.golden` section, if any. A site reading `.golden` gets its
-    /// `auipc; ld` here, as its address never changes.
+    /// execution order, `fail_addr` that of `_fail`, `golden_addr` that of
+    /// the `.golden` section, if any, and `landings` those of the blocks
+    /// carrying a landing key. A site reading `.golden` gets its `auipc; ld`
+    /// here, as its address never changes.
     pub fn link(
         &mut self,
         instrs: &mut [Instruction],
@@ -216,6 +244,7 @@ impl Site {
         next_addr: Option<u64>,
         fail_addr: Option<u64>,
         golden_addr: Option<u64>,
+        landings: &HashMap<usize, u64>,
     ) -> Result<()> {
         let addr_of = |instrs: &[Instruction], index: usize| {
             block_addr + code_size(&instrs[..index]) as u64
@@ -241,17 +270,16 @@ impl Site {
             let load = PoolRef { at: self.at, rd: rprod, slot, load: true };
             load.link(instrs, block_addr, golden_addr)?;
         }
-        let next = || next_addr.ok_or_else(|| anyhow!("site jumps to the next block, which is missing"));
         let pc = addr_of(instrs, self.at);
         match &mut self.kind {
             Kind::Value { dest, value, .. } => {
-                *value = Some(match *dest {
-                    Dest::Data(value) => value,
-                    Dest::Next => next()?,
-                });
+                *value = Some(dest.resolve(next_addr, landings)?);
             }
-            Kind::Branch { taken: true, offset, .. } | Kind::Jump { offset, .. } | Kind::Link { offset, .. } => {
-                *offset = i32::try_from(next()?.wrapping_sub(pc) as i64)?;
+            Kind::Branch { taken: true, offset, .. } | Kind::Jump { offset, .. } => {
+                *offset = i32::try_from(Dest::Next.resolve(next_addr, landings)?.wrapping_sub(pc) as i64)?;
+            }
+            Kind::Link { offset, dest, .. } => {
+                *offset = i32::try_from(dest.resolve(next_addr, landings)?.wrapping_sub(pc) as i64)?;
             }
             _ => {}
         }
@@ -294,7 +322,7 @@ impl Site {
                 };
                 *opcode = Some(chosen.0);
             }
-            Kind::Guard { .. } | Kind::Jump { .. } | Kind::Link { .. } => {}
+            Kind::Guard { .. } | Kind::Jump { .. } | Kind::Link { .. } | Kind::Leave => {}
         }
         Ok(())
     }
@@ -386,11 +414,12 @@ impl Site {
                     Instruction::Jal { rd, imm: offset }
                 };
             }
-            Kind::Link { rd, offset } => {
+            Kind::Link { rd, offset, .. } => {
                 let (hi, lo) = split_imm32(offset as u32);
                 instrs[self.at] = Instruction::Auipc { rd, imm: hi };
                 instrs[self.at + 1] = Instruction::Addi { rd, rs1: rd, imm: lo };
             }
+            Kind::Leave => {}
         }
         Ok(())
     }
@@ -454,6 +483,23 @@ impl<'a> SiteBuilder<'a> {
     /// no longer carries workload data.
     pub fn clobber(&mut self, reg: XReg) {
         self.fresh.retain(|r| *r != reg);
+    }
+
+    /// Point a register at `dest` with a value site entangled with the
+    /// freshest registers, for generator code that writes it to a CSR (a trap
+    /// vector or an exception PC). Returns the register and the site.
+    pub fn address(&mut self, instrs: &mut Vec<Instruction>, dest: Dest, rng: &mut (impl Rng + ?Sized)) -> (XReg, Site) {
+        let rprod = self.stale(rng);
+        let rdeps = self.peek(rng, MAX_PEEK, rprod);
+        self.clobber(rprod);
+        (rprod, self.value_site(instrs, rprod, rdeps, dest))
+    }
+
+    /// A register generator code may overwrite, now clobbered.
+    pub fn scratch(&mut self, rng: &mut (impl Rng + ?Sized)) -> XReg {
+        let reg = self.stale(rng);
+        self.clobber(reg);
+        reg
     }
 
     /// After a workload instruction: a guard if enough registers are fresh.
@@ -890,7 +936,7 @@ mod tests {
             },
             fail_at: None,
         };
-        site.link(&mut instrs, block, None, Some(block + 0x100), Some(golden_addr)).unwrap();
+        site.link(&mut instrs, block, None, Some(block + 0x100), Some(golden_addr), &HashMap::new()).unwrap();
         site.render(&mut instrs, Xlen::X64).unwrap();
         let (Instruction::Auipc { rd, imm: hi }, Instruction::Ld { rd: ld_rd, rs1, imm: lo }) =
             (instrs[4], instrs[5])

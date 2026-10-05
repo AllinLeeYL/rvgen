@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{Ok, Result, anyhow, ensure};
 use rand::rngs::StdRng;
@@ -7,8 +7,10 @@ use rand::{Rng, RngExt};
 use crate::basicblock::BasicBlock;
 use crate::entangle::{GOLDEN_SLOT_SIZE, PoolRef, SiteBuilder, code_size, use_compressed};
 use crate::membase::MemBases;
+use crate::orchestrator::PMP_WINDOW_SECTION;
+use crate::privilege::{Ctx, MSTATUS_CLEARED, PMP_REGION, PmpWindow, PrivState, SINK_M, SINK_S, Switcher, window_perms};
 use crate::orchestrator::GlobalState;
-use crate::riscv::asmutil::{load_imm, load_imm_fixed, twos_complement};
+use crate::riscv::asmutil::{load_imm, load_imm32, load_imm_fixed, twos_complement};
 use crate::riscv::{Csr, Extension, FReg, Instruction, Opcode, PrivilegeLevel, XReg, Xlen};
 use crate::spike::ArchState;
 use crate::target::Target;
@@ -22,6 +24,11 @@ pub const CHECK_LABEL: &str = "_check";
 pub const EXIT_LABEL: &str = "_exit";
 pub const FAIL_LABEL: &str = "_fail";
 pub const TRAP_HANDLER_LABEL: &str = "_trap_handler";
+pub const STRAP_HANDLER_LABEL: &str = "_strap_handler";
+
+/// `_strap_handler` reports `scause` plus this, above every `mcause + 1` the
+/// M-mode handler reports for an exception.
+pub const STRAP_EXIT_CODE_BASE: i32 = 0x101;
 
 /// HTIF exit code reported when the self-check finds a mismatch. It lies above
 /// every `mcause + 1` the trap handler reports for exceptions, and its low byte
@@ -35,48 +42,13 @@ pub const DIVERGENCE_EXIT_CODE: i32 = 0xab;
 /// Deepest nesting of calls.
 const MAX_CALL_DEPTH: usize = 8;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct HartState {
-    pub privilege: PrivilegeLevel,
-
-    // mstatus state revelant to privilege transitions
-    pub mpp: PrivilegeLevel,
-    pub spp: PrivilegeLevel,
-
-    // whether these CSR currently contain valid continuation address
-    pub mepc_valid: bool,
-    pub sepc_valid: bool,
-
-    // whether trap vectors have been initialized
-    pub mtvec_valid: bool,
-    pub stvec_valid: bool,
-
-    pub medeleg: u64,
-    pub mideleg: u64,
-
+    /// The privilege mode and the state the switches set up, as of the block
+    /// being generated (see [`crate::privilege`]).
+    pub privilege: PrivState,
     /// Registers reserved to address memory, fixed for the whole program.
     pub mem_bases: MemBases,
-}
-
-impl Default for HartState {
-    fn default() -> Self {
-        Self {
-            privilege: PrivilegeLevel::Machine,
-            mpp: PrivilegeLevel::Machine,
-            spp: PrivilegeLevel::User,
-
-            mepc_valid: false,
-            sepc_valid: false,
-
-            mtvec_valid: false,
-            stvec_valid: false,
-
-            medeleg: 0,
-            mideleg: 0,
-
-            mem_bases: MemBases::default(),
-        }
-    }
 }
 
 /// `.golden` holds the sites' golden values, then, unless the constants are
@@ -171,12 +143,30 @@ impl Hart {
         // A call makes the next block a callee, which returns into the block
         // placed right after the caller. Calls nest up to MAX_CALL_DEPTH;
         // the innermost callee returns first.
+        // Privilege switches end blocks outside calls: a trap's next block is
+        // its landing, which starts by restoring the trap vector, and an
+        // `xret`'s next block runs in the new mode. The program is back in M
+        // when it reaches `_check`.
+        let window = state.memory.get(PMP_WINDOW_SECTION).ok().map(|section| PmpWindow {
+            start: section.region.start,
+            perms: window_perms((section.region.size / PMP_REGION) as usize, rng),
+        });
+        let mut switcher = Switcher::new(target, window, rng);
+        let initial_medeleg = switcher.state.medeleg;
+        let mem_bases = self.state.mem_bases.clone();
+        let mut landing = None;
+
         let call_proba = rng.random_range(0.0..0.4);
         let mut callers = Vec::new();
         let mut index = 2;
         while index < self.bbs.len() {
             let last = index + 1 == self.bbs.len();
             let bb = &mut self.bbs[index];
+            if let Some(landing) = landing.take() {
+                let mut ctx = Ctx { target, sites: sites.as_mut(), reserved: &reserved, mem_bases: &mem_bases };
+                switcher.land(bb, &mut ctx, landing, rng);
+            }
+            self.state.privilege = switcher.state.clone();
             if let Some(left) = bb.run(rng, target, state, &mut self.state, weights, sites.as_mut())? {
                 // A control-flow site ended the block. The rest of its budget
                 // starts the next one; the last block also needs a plain jump,
@@ -190,6 +180,15 @@ impl Hart {
                     self.bbs.push(BasicBlock::new(index + 1, false, 0));
                 }
                 self.bbs[index + 1].after = callers.pop();
+            } else if callers.is_empty() && {
+                let mut ctx = Ctx { target, sites: sites.as_mut(), reserved: &reserved, mem_bases: &mem_bases };
+                let (ended, next) = switcher.end_block(bb, &mut ctx, last, rng)?;
+                landing = next;
+                ended
+            } {
+                if last {
+                    self.bbs.push(BasicBlock::new(index + 1, false, 0));
+                }
             } else {
                 let call = !last && callers.len() < MAX_CALL_DEPTH && rng.random_bool(call_proba);
                 let compressed = !call && !last && use_compressed(target, &[Opcode::CJ], rng);
@@ -202,7 +201,7 @@ impl Hart {
         }
         self.site_slots = sites.as_ref().map_or(0, SiteBuilder::golden_slots);
 
-        let init_csrs = crate::csrs::init_csrs(target, rng);
+        let init_csrs = crate::csrs::init_csrs(target, initial_medeleg, switcher.window(), rng);
         self.init_values = init_values(rng, target, &init_csrs, &self.state.mem_bases);
         let csrs: Vec<_> = init_csrs.iter().map(|(csr, _)| *csr).collect();
         let mut init = init_block(&self.init_values, &csrs, target, self.init_slot())?;
@@ -235,7 +234,8 @@ impl Hart {
             label: Some(EXIT_LABEL.into()),
             ..Default::default()
         });
-        if entangle.is_some() {
+        {
+            // Also reached by falling through a trap or an xret.
             let fail = Instruction::Addi {
                 rd: XReg::X5,
                 rs1: XReg::ZERO,
@@ -247,7 +247,9 @@ impl Hart {
                 ..Default::default()
             });
         }
-        let before_handler = code_size(&set_mtvec(0))
+        let has_s = target.has_privilege(PrivilegeLevel::Supervisor);
+        let start_len = code_size(&set_tvec(Csr::MTVEC, 0)) * if has_s { 2 } else { 1 };
+        let before_handler = start_len
             + code_size(&self.bbs[1].instrs)
             + epilogue.iter().map(|bb| code_size(&bb.instrs)).sum::<usize>();
         let mut padding = Vec::new();
@@ -260,13 +262,26 @@ impl Hart {
             instrs: padding,
             ..Default::default()
         });
+        let handler = trap_handler(tohost, target.xlen);
+        // Every handler instruction is 4 bytes, so the next handler is aligned too.
+        let strap_offset = handler_offset + code_size(&handler);
         epilogue.push(BasicBlock {
-            instrs: trap_handler(tohost, target.xlen),
+            instrs: handler,
             label: Some(TRAP_HANDLER_LABEL.into()),
+            landing: Some(SINK_M),
             ..Default::default()
         });
-        self.bbs[0].instrs = set_mtvec(handler_offset as i64).to_vec();
-        self.state.mtvec_valid = true;
+        self.bbs[0].instrs = set_tvec(Csr::MTVEC, handler_offset as i64).to_vec();
+        if has_s {
+            epilogue.push(BasicBlock {
+                instrs: strap_handler(tohost, target.xlen),
+                label: Some(STRAP_HANDLER_LABEL.into()),
+                landing: Some(SINK_S),
+                ..Default::default()
+            });
+            let at = code_size(&self.bbs[0].instrs);
+            self.bbs[0].instrs.extend(set_tvec(Csr::STVEC, (strap_offset - at) as i64));
+        }
         // The epilogue follows `_init`, each block right after the previous one.
         let mut prev = 1;
         for mut bb in epilogue {
@@ -369,6 +384,9 @@ impl Hart {
                     },
                 };
                 let len = total[head];
+                // Trap vectors need 4-byte aligned landings, vectored ones more.
+                let bb = &self.bbs[head];
+                let align = if bb.landing.is_some() { align.max(4) } else { align }.max(bb.align);
                 let addr = free_spot(&used, start, end, lo, hi, len, align, rng)
                     .ok_or_else(|| anyhow!("no room for {len} bytes of code within reach; the code area is too full"))?;
                 let mut at = addr;
@@ -418,13 +436,15 @@ impl Hart {
     /// starts at `golden_addr`, and render the sites' placeholders.
     pub fn link(&mut self, golden_addr: Option<u64>, xlen: Xlen) -> Result<()> {
         let fail_addr = self.label_index(FAIL_LABEL).map(|fail| self.bbs[fail].addr);
+        let landings: HashMap<_, _> =
+            self.bbs.iter().filter_map(|bb| Some((bb.landing?, bb.addr))).collect();
         let next: Vec<_> = self.bbs.iter().skip(1).map(|bb| Some(bb.addr)).chain([None]).collect();
         for (bb, next_addr) in self.bbs.iter_mut().zip(next) {
             for pool_ref in &bb.pool_refs {
                 pool_ref.link(&mut bb.instrs, bb.addr, golden_addr)?;
             }
             for site in bb.sites.iter_mut() {
-                site.link(&mut bb.instrs, bb.addr, next_addr, fail_addr, golden_addr)?;
+                site.link(&mut bb.instrs, bb.addr, next_addr, fail_addr, golden_addr, &landings)?;
             }
             bb.render_sites(xlen)?;
         }
@@ -539,6 +559,11 @@ fn init_block(values: &[u64], csrs: &[Csr], target: &Target, pool: Option<usize>
         None => load_imm(rd, values[k] as i64, xlen),
     };
     let mut ks = 0..values.len();
+    // No interrupt may fire, even below M where M-mode ones are always
+    // enabled; mstatus starts with no virtualization and previous modes U.
+    block.instrs.push(Csrrw { rd: XReg::ZERO, rs1: XReg::ZERO, csr: Csr::MIE });
+    block.instrs.extend(load_imm32(XReg::X5, MSTATUS_CLEARED as i32, xlen));
+    block.instrs.push(Csrrc { rd: XReg::ZERO, rs1: XReg::X5, csr: Csr::MSTATUS });
     if target.has(Extension::F) {
         // Enable the FPU first, as fcsr is among the CSRs: set both mstatus.FS
         // bits (Dirty) with CSRRS so the other mstatus fields are preserved.
@@ -670,10 +695,10 @@ fn check_block(values: &[u64], target: &Target, pool: Option<usize>) -> Result<B
     Ok(block)
 }
 
-/// Point mtvec (direct mode) at `offset` bytes from the first instruction of
-/// this sequence. Always three instructions so the offset can be patched in
-/// once the code in between is known.
-fn set_mtvec(offset: i64) -> [Instruction; 3] {
+/// Point the trap vector `csr` (direct mode) at `offset` bytes from the first
+/// instruction of this sequence. Always three instructions so the offset can
+/// be patched in once the code in between is known.
+fn set_tvec(csr: Csr, offset: i64) -> [Instruction; 3] {
     let hi = (offset + 0x800) >> 12;
     [
         Instruction::Auipc {
@@ -688,7 +713,7 @@ fn set_mtvec(offset: i64) -> [Instruction; 3] {
         Instruction::Csrrw {
             rd: XReg::ZERO,
             rs1: XReg::X5,
-            csr: Csr::MTVEC,
+            csr,
         },
     ]
 }
@@ -707,6 +732,34 @@ fn trap_handler(tohost: u64, xlen: Xlen) -> Vec<Instruction> {
             rd: XReg::X5,
             rs1: XReg::X5,
             imm: 1,
+        },
+    ];
+    instrs.extend(report_to_tohost(
+        Instruction::Slli {
+            rd: XReg::X5,
+            rs1: XReg::X5,
+            shamt: 1,
+        },
+        tohost,
+        xlen,
+    ));
+    instrs
+}
+
+/// Supervisor-mode sink handler, which `stvec` points at unless a planned trap
+/// armed it: ends the test with exit code `0x101 + scause`, so unplanned
+/// traps delegated to S fail too.
+fn strap_handler(tohost: u64, xlen: Xlen) -> Vec<Instruction> {
+    let mut instrs = vec![
+        Instruction::Csrrs {
+            rd: XReg::X5,
+            rs1: XReg::ZERO,
+            csr: Csr::SCAUSE,
+        },
+        Instruction::Addi {
+            rd: XReg::X5,
+            rs1: XReg::X5,
+            imm: STRAP_EXIT_CODE_BASE,
         },
     ];
     instrs.extend(report_to_tohost(

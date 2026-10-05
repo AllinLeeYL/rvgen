@@ -169,6 +169,28 @@ impl MemBases {
         }
     }
 
+    /// A base and an immediate addressing a `size`-byte access inside the
+    /// base's section at an address that is not a multiple of `size`, for a
+    /// planned misaligned-access exception; `None` if no base has room.
+    pub fn misaligned(&self, size: u64, rng: &mut (impl Rng + ?Sized)) -> Option<(XReg, i32)> {
+        let windows: Vec<_> = self
+            .bases
+            .iter()
+            .filter_map(|base| {
+                let lo = base.start.max(base.addr.saturating_sub(2048));
+                let hi = base.end.checked_sub(size)?.min(base.addr + 2047);
+                (lo.next_multiple_of(size) + size <= hi).then_some((*base, lo, hi))
+            })
+            .collect();
+        if windows.is_empty() {
+            return None;
+        }
+        let (base, lo, hi) = windows[rng.random_range(0..windows.len())];
+        let aligned = rng.random_range(lo.next_multiple_of(size)..=hi - size) / size * size;
+        let addr = aligned + rng.random_range(1..size);
+        Some((base.reg, addr.wrapping_sub(base.addr) as i64 as i32))
+    }
+
     fn random_base(&self, rng: &mut (impl Rng + ?Sized)) -> MemBase {
         self.bases[rng.random_range(0..self.bases.len())]
     }

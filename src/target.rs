@@ -23,6 +23,12 @@ pub struct Target {
     pub smc_size: u64,
     /// PMP entries the target implements (pmpaddr0 on).
     pub pmp_regions: usize,
+    /// `medeleg` bits the device and Spike both delegate; traps are only
+    /// routed to S through these (see [`crate::privilege`]). 0 by default.
+    pub medeleg_mask: u64,
+    /// Whether misaligned loads and stores trap, so they can be raised on
+    /// purpose. False by default.
+    pub misaligned_traps: bool,
 }
 
 impl Target {
@@ -77,6 +83,8 @@ impl Target {
             scratch_size,
             smc_size,
             pmp_regions,
+            medeleg_mask: 0,
+            misaligned_traps: false,
         })
     }
 
@@ -155,9 +163,12 @@ impl Target {
 
     /// Validate both ISA availability and operands before emitting any code.
     pub fn emit(&self, instruction: Instruction, bytes: &mut Vec<u8>) -> Result<()> {
-        // Raw encodings fill the code area's gaps with junk.
+        // Raw encodings fill the code area's gaps with junk; generator code
+        // switches privilege modes with privileged instructions, which the
+        // workload only draws when the ISA names them.
         ensure!(
-            self.supports(instruction.opcode()) || instruction.opcode().extension() == Extension::Raw,
+            self.supports(instruction.opcode())
+                || matches!(instruction.opcode().extension(), Extension::Raw | Extension::Privileged),
             "{} is not enabled for this target",
             instruction.opcode()
         );

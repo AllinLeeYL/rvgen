@@ -10,6 +10,11 @@
 //!
 //! A CSR only exists when the target has what it belongs to: the S-mode CSRs
 //! and `medeleg`/`mideleg` need S, `mcounteren` needs U, and the FP CSRs need F.
+//! The workload only accesses those its current mode may (see
+//! [`crate::privilege`]). With S or U, the trap vectors, `medeleg` and the PMP
+//! are the privilege switches' to set: `stvec` points at `_strap_handler`
+//! unless armed, `medeleg` holds the generator's value, and the PMP gives S
+//! and U all memory but the PMP window.
 //!
 //! The self-check compares registers against Spike, so a CSR whose value read
 //! back may differ between Spike and a correct core (WARL fields,
@@ -20,6 +25,7 @@ use anyhow::{Result, ensure};
 use rand::distr::{Distribution, weighted::WeightedIndex};
 use rand::{Rng, RngExt};
 
+use crate::privilege::{PMP_REGION, PmpWindow, PrivState};
 use crate::riscv::{Csr, Extension, Instruction, PrivilegeLevel, XReg, Xlen};
 use crate::target::Target;
 
@@ -108,17 +114,18 @@ pub fn workload_csrs(target: &Target) -> Vec<WorkloadCsr> {
         csrs.push(clobbered(hpm_counter(index), 2.0 / hpm));
         csrs.push(clobbered(hpm_event(index), 2.0 / hpm));
     }
-    for index in 0..target.pmp_regions {
-        csrs.push(clobbered(pmp_addr(index), 2.0 / target.pmp_regions as f64));
+    let lower_modes = target.has_privilege(PrivilegeLevel::User);
+    if !lower_modes {
+        for index in 0..target.pmp_regions {
+            csrs.push(clobbered(pmp_addr(index), 2.0 / target.pmp_regions as f64));
+        }
     }
-    if target.has_privilege(PrivilegeLevel::User) {
+    if lower_modes {
         csrs.push(clobbered(Csr::MCOUNTEREN, 1.0));
     }
     if target.has_privilege(PrivilegeLevel::Supervisor) {
         for csr in [
-            Csr::MEDELEG,
             Csr::MIDELEG,
-            Csr::STVEC,
             Csr::SEPC,
             Csr::SCAUSE,
             Csr::STVAL,
@@ -137,10 +144,14 @@ pub struct CsrSampler {
 }
 
 impl CsrSampler {
-    pub fn new(target: &Target) -> Result<Self> {
-        let csrs = workload_csrs(target);
-        let index = WeightedIndex::new(csrs.iter().map(|csr| csr.weight))?;
-        Ok(Self { csrs, index })
+    /// The CSRs the workload may access in `state`; `None` if there are none.
+    pub fn new(target: &Target, state: &PrivState) -> Option<Self> {
+        let csrs: Vec<_> = workload_csrs(target)
+            .into_iter()
+            .filter(|csr| state.allows_csr(csr.csr))
+            .collect();
+        let index = WeightedIndex::new(csrs.iter().map(|csr| csr.weight)).ok()?;
+        Some(Self { csrs, index })
     }
 
     pub fn sample(&self, rng: &mut (impl Rng + ?Sized)) -> &WorkloadCsr {
@@ -150,9 +161,15 @@ impl CsrSampler {
 
 /// CSRs `_init` writes, in order, with their values. Only the scratch and FP
 /// CSRs can be read back as written; the rest are only written, each with a
-/// random value its WARL fields legalize. Every program writes a random subset
+/// random value its WARL fields legalize, but `medeleg`, which gets
+/// `medeleg`, and the PMP (see [`pmp`]). Every program writes a random subset
 /// of the HPM counters and their event selectors.
-pub fn init_csrs(target: &Target, rng: &mut (impl Rng + ?Sized)) -> Vec<(Csr, u64)> {
+pub fn init_csrs(
+    target: &Target,
+    medeleg: u64,
+    window: Option<&PmpWindow>,
+    rng: &mut (impl Rng + ?Sized),
+) -> Vec<(Csr, u64)> {
     let xlen = target.xlen;
     let mut csrs: Vec<_> = target
         .scratch_csrs()
@@ -177,33 +194,38 @@ pub fn init_csrs(target: &Target, rng: &mut (impl Rng + ?Sized)) -> Vec<(Csr, u6
         csrs.push((Csr::MCOUNTEREN, random_value(rng, xlen)));
     }
     if target.has_privilege(PrivilegeLevel::Supervisor) {
-        for csr in [
-            Csr::MEDELEG,
-            Csr::MIDELEG,
-            Csr::STVEC,
-            Csr::SEPC,
-            Csr::SCAUSE,
-            Csr::STVAL,
-            Csr::SCOUNTEREN,
-        ] {
+        csrs.push((Csr::MEDELEG, medeleg));
+        for csr in [Csr::MIDELEG, Csr::SEPC, Csr::SCAUSE, Csr::STVAL, Csr::SCOUNTEREN] {
             csrs.push((csr, random_value(rng, xlen)));
         }
     }
-    csrs.extend(pmp(target, rng));
+    csrs.extend(pmp(target, window, rng));
     csrs
 }
 
-/// The PMP entries' addresses, then their configurations. Entry 0 covers all
-/// memory with full permissions, so S and U could run; the others are random.
-/// No entry is locked, so none binds M-mode.
-fn pmp(target: &Target, rng: &mut (impl Rng + ?Sized)) -> Vec<(Csr, u64)> {
+/// The PMP entries' addresses, then their configurations. No entry is locked,
+/// so none binds M-mode. With S or U, the lowest entries cover the window's
+/// regions with its permissions, the next are random over addresses below
+/// RAM, and the last covers all memory with full permissions, so S and U
+/// reach everything else. Otherwise
+/// entry 0 covers all memory and the others are random.
+fn pmp(target: &Target, window: Option<&PmpWindow>, rng: &mut (impl Rng + ?Sized)) -> Vec<(Csr, u64)> {
     const NAPOT: u8 = 3 << 3;
     let regions = target.pmp_regions;
+    let lower_modes = target.has_privilege(PrivilegeLevel::User);
+    let all = if lower_modes { regions.saturating_sub(1) } else { 0 };
     let mut csrs = Vec::new();
     let mut cfgs = Vec::with_capacity(regions);
     for index in 0..regions {
-        let (addr, cfg) = if index == 0 {
+        let window_region = window.and_then(|w| w.perms.get(index).map(|perms| (w.start, *perms)));
+        let (addr, cfg) = if index == all {
             (u64::MAX, NAPOT | 0b111)
+        } else if let Some((start, perms)) = window_region.filter(|_| lower_modes) {
+            // NAPOT over 4 KiB: the base over 4, ones below the size's bit.
+            let base = start + index as u64 * PMP_REGION;
+            (base >> 2 | (PMP_REGION >> 3) - 1, NAPOT | perms)
+        } else if lower_modes {
+            below_ram(target, rng)
         } else {
             (random_value(rng, target.xlen), pmp_cfg(rng))
         };
@@ -221,6 +243,27 @@ fn pmp(target: &Target, rng: &mut (impl Rng + ?Sized)) -> Vec<(Csr, u64)> {
         csrs.push((csr, value));
     }
     csrs
+}
+
+/// A PMP entry that matches no memory the program uses: any mode and
+/// permissions over an address range in the lower half of the space below
+/// RAM, so S and U still reach all memory through the last entry. A TOR range
+/// whose base is a higher entry's is empty.
+fn below_ram(target: &Target, rng: &mut (impl Rng + ?Sized)) -> (u64, u8) {
+    const NAPOT: u8 = 3 << 3;
+    let limit = target.physical_memory.start / 2;
+    if limit < 8 {
+        return (random_value(rng, target.xlen), 0);
+    }
+    let cfg = pmp_cfg(rng);
+    let addr = rng.random_range(0..limit) >> 2;
+    if cfg & NAPOT != NAPOT {
+        return (addr, cfg);
+    }
+    // NAPOT over 2^(k + 3) bytes: k trailing ones, the range below `limit`.
+    let max = (limit >> 3).ilog2();
+    let k = rng.random_range(0..max);
+    (addr >> 1 >> k << 1 << k | ((1 << k) - 1), cfg)
 }
 
 /// A random unlocked PMP configuration: any address-matching mode and
@@ -303,6 +346,46 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn pmp_window_entries_cover_its_regions_below_the_allow_all_entry() {
+        let mut rng = StdRng::seed_from_u64(6);
+        let (target, _, _) = targets().pop().unwrap();
+        let window = PmpWindow { start: 0x8700_0000, perms: vec![0, 1, 3, 7] };
+        let csrs = init_csrs(&target, 0, Some(&window), &mut rng);
+        let value = |csr: Csr| csrs.iter().find(|(c, _)| *c == csr).unwrap().1;
+        let cfg = value(Csr::PMPCFG0).to_le_bytes();
+        for (index, perms) in window.perms.iter().enumerate() {
+            assert_eq!(cfg[index], 0x18 | perms);
+            let base = window.start + index as u64 * PMP_REGION;
+            assert_eq!(value(pmp_addr(index)), base >> 2 | 0x1ff);
+        }
+        assert_eq!(cfg[7], 0x1f);
+        assert_eq!(value(pmp_addr(7)), u64::MAX);
+    }
+
+    #[test]
+    fn pmp_entries_between_window_and_allow_all_never_match_ram() {
+        let mut rng = StdRng::seed_from_u64(7);
+        let (target, _, _) = targets().pop().unwrap();
+        let ram = target.physical_memory.start;
+        for _ in 0..2000 {
+            let (addr, cfg) = below_ram(&target, &mut rng);
+            assert_eq!(cfg & 0x80, 0);
+            let (lo, hi) = match cfg >> 3 & 3 {
+                0 => continue,
+                1 => (0, addr << 2),
+                2 => (addr << 2, (addr << 2) + 4),
+                _ => {
+                    let ones = addr.trailing_ones();
+                    let size = 1u64 << (ones + 3);
+                    let base = (addr & !((1 << (ones + 1)) - 1)) << 2;
+                    (base, base + size)
+                }
+            };
+            assert!(lo <= hi && hi <= ram, "{addr:#x} {cfg:#x} covers {lo:#x}..{hi:#x}");
+        }
+    }
+
     const S_ONLY: &[Csr] = &[
         Csr::SSCRATCH,
         Csr::MEDELEG,
@@ -350,7 +433,7 @@ mod tests {
         for (target, has_s, has_u) in targets() {
             let workload: Vec<_> = workload_csrs(&target).iter().map(|csr| csr.csr).collect();
             for _ in 0..20 {
-                let init: Vec<_> = init_csrs(&target, &mut rng).iter().map(|(csr, _)| *csr).collect();
+                let init: Vec<_> = init_csrs(&target, 0, None, &mut rng).iter().map(|(csr, _)| *csr).collect();
                 for csr in workload.iter().chain(&init) {
                     assert!(!NEVER.contains(csr), "{csr} must not be written");
                     assert!(has_s || !S_ONLY.contains(csr), "{csr} needs S-mode");
@@ -378,14 +461,16 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(4);
         for (target, _, _) in targets() {
             for _ in 0..50 {
-                let csrs = init_csrs(&target, &mut rng);
+                let csrs = init_csrs(&target, 0, None, &mut rng);
                 let cfg_bytes: Vec<u8> = csrs
                     .iter()
                     .filter(|(csr, _)| (0x3a0..=0x3af).contains(&csr.index()))
                     .flat_map(|(_, value)| value.to_le_bytes().into_iter().take(target.xlen.bits() as usize / 8))
                     .collect();
                 assert_eq!(cfg_bytes.len(), target.pmp_regions);
-                assert_eq!(cfg_bytes[0], 0x1f);
+                // With S or U, the last entry gives them all memory.
+                let all = if target.has_privilege(PrivilegeLevel::User) { target.pmp_regions - 1 } else { 0 };
+                assert_eq!(cfg_bytes[all], 0x1f);
                 for cfg in cfg_bytes {
                     assert_eq!(cfg & 0x80, 0, "locked PMP entry");
                     assert_ne!(cfg & 0b011, 0b010, "reserved W without R");
@@ -417,7 +502,7 @@ mod tests {
             }
         }
         for _ in 0..100 {
-            let fcsr = init_csrs(&target, &mut rng)
+            let fcsr = init_csrs(&target, 0, None, &mut rng)
                 .into_iter()
                 .find(|(csr, _)| *csr == Csr::FCSR)
                 .unwrap()

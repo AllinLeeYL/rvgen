@@ -9,7 +9,8 @@ use crate::entangle::{GOLDEN_SLOT_SIZE, code_size};
 use crate::hart::Hart;
 use crate::memory::{MemoryLayout, MemoryRegion, Permissions, Section};
 use crate::options::{CommonOpts, ManyOpts, OneOpts};
-use crate::riscv::Xlen;
+use crate::privilege::{MAX_PMP_WINDOW_REGIONS, PMP_REGION};
+use crate::riscv::{PrivilegeLevel, Xlen};
 use crate::spike::Spike;
 use crate::target::Target;
 use crate::utils::log_uniform;
@@ -31,6 +32,9 @@ const MAX_SCRATCH: u64 = 1 << 20;
 
 /// The data section the workload's memory accesses target.
 const SCRATCH_SECTION: &str = "scratch";
+
+/// The private data the PMP window covers (see [`crate::privilege`]).
+pub const PMP_WINDOW_SECTION: &str = "pmpwin";
 
 #[derive(Default)]
 pub struct GlobalState {
@@ -94,6 +98,15 @@ impl Orchestrator {
             Err(_) => Vec::new(),
         };
         let _ = state.memory.reserve(&target.physical_memory, "smc", target.smc_size, 4, Permissions::RWX);
+        // Private 4 KiB regions the low PMP entries guard, for planned access
+        // faults in S and U; the last entry stays for everything else.
+        let regions = target.pmp_regions.saturating_sub(1).min(MAX_PMP_WINDOW_REGIONS);
+        if target.has_privilege(PrivilegeLevel::User) && regions > 0 {
+            let size = regions as u64 * PMP_REGION;
+            if let Ok(section) = state.memory.reserve(ram, PMP_WINDOW_SECTION, size, PMP_REGION, Permissions::RW) {
+                section.private = true;
+            }
+        }
 
         Self {
             target,
@@ -241,7 +254,7 @@ pub fn generate(opts: &CommonOpts) -> Result<Vec<u8>> {
         size: opts.ram_size,
         permissions: Permissions::RWX,
     };
-    let target = Target::new(
+    let mut target = Target::new(
         opts.xlen,
         opts.isa.iter().copied(),
         opts.privileges.iter().copied(),
@@ -253,6 +266,8 @@ pub fn generate(opts: &CommonOpts) -> Result<Vec<u8>> {
         opts.smc_size,
         opts.pmp_regions,
     )?;
+    target.medeleg_mask = opts.medeleg_mask;
+    target.misaligned_traps = opts.misaligned_traps;
     let self_check = !opts.no_self_check;
     let entangle = (self_check && !opts.no_entangle).then_some(opts.guard_threshold);
     let golden_section = !opts.inline_golden && opts.xlen == Xlen::X64;

@@ -1,10 +1,10 @@
 use crate::csrs::{CsrSampler, Read};
-use crate::entangle::{Kind, PoolRef, Site, SiteBuilder, written_xreg};
+use crate::entangle::{Dest, Kind, PoolRef, Site, SiteBuilder, written_xreg};
 use crate::hart::HartState;
 use crate::orchestrator::GlobalState;
 use crate::riscv::asmutil::csr_rd_and_addr;
 use crate::riscv::asmutil::load_imm32;
-use crate::riscv::{Instruction, XReg, Xlen};
+use crate::riscv::{Instruction, InstructionClass, XReg, Xlen};
 use crate::target::Target;
 use crate::weights::{InstrWeights, is_control_flow, unweightable_reason};
 use anyhow::{Result, ensure};
@@ -27,6 +27,12 @@ pub struct BasicBlock {
     /// Index of the block this one is placed right after, e.g. the caller a
     /// `ret` returns into; `None` places it anywhere.
     pub after: Option<usize>,
+    /// The key a trap vector names this block by, when a trap lands here
+    /// (see [`crate::privilege`]). Such a block is 4-byte aligned.
+    pub landing: Option<usize>,
+    /// Alignment of the block's address in bytes beyond the instructions',
+    /// if nonzero.
+    pub align: u64,
 }
 
 impl BasicBlock {
@@ -41,6 +47,8 @@ impl BasicBlock {
             pool_refs: Vec::new(),
             addr: 0,
             after: None,
+            landing: None,
+            align: 0,
         }
     }
 
@@ -62,7 +70,7 @@ impl BasicBlock {
     pub fn ret(&mut self, compressed: bool) {
         self.sites.push(Site {
             at: self.instrs.len(),
-            kind: Kind::Link { rd: XReg::RA, offset: 0 },
+            kind: Kind::Link { rd: XReg::RA, offset: 0, dest: Dest::Next },
             fail_at: None,
         });
         self.instrs.extend([Instruction::nop(), Instruction::nop()]);
@@ -88,10 +96,14 @@ impl BasicBlock {
         mut sites: Option<&mut SiteBuilder>,
     ) -> Result<Option<usize>> {
         // Branches and jalr are drawn like any opcode, but only exist as
-        // entanglement sites.
+        // entanglement sites. Only what the current privilege state allows
+        // is drawn, CSR accesses only if some CSR is accessible.
+        let csrs = CsrSampler::new(target, &hart_state.privilege);
         let candidates: Vec<_> = target
             .workload_opcodes()
             .filter(|opcode| unweightable_reason(*opcode).is_none())
+            .filter(|opcode| hart_state.privilege.allows(*opcode))
+            .filter(|opcode| csrs.is_some() || opcode.class() != InstructionClass::Csr)
             .filter(|opcode| {
                 !is_control_flow(*opcode)
                     || sites.as_deref().is_some_and(|builder| builder.can_generate(*opcode))
@@ -105,7 +117,6 @@ impl BasicBlock {
             .then(|| weights.sampler(&candidates))
             .transpose()?;
         let xlen = target.xlen;
-        let csrs = CsrSampler::new(target)?;
 
         for drawn in 0..self.budget {
             let opcode = sampler.as_ref().expect("built for a nonzero budget").sample(rng);
@@ -125,7 +136,7 @@ impl BasicBlock {
             let mut instr = opcode.random(rng, xlen)?;
             let mut csr_read = None;
             if csr_rd_and_addr(&instr).is_some() {
-                let csr = csrs.sample(rng);
+                let csr = csrs.as_ref().expect("CSR accesses are drawn with CSRs").sample(rng);
                 instr = csr.access(instr);
                 csr_read = Some(csr.read);
             }
