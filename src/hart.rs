@@ -1,13 +1,15 @@
+use std::collections::BTreeMap;
+
 use anyhow::{Ok, Result, anyhow, ensure};
 use rand::rngs::StdRng;
 use rand::{Rng, RngExt};
 
 use crate::basicblock::BasicBlock;
-use crate::entangle::{GOLDEN_SLOT_SIZE, PoolRef, SiteBuilder, code_size};
+use crate::entangle::{GOLDEN_SLOT_SIZE, PoolRef, SiteBuilder, code_size, use_compressed};
 use crate::membase::MemBases;
 use crate::orchestrator::GlobalState;
 use crate::riscv::asmutil::{load_imm, load_imm_fixed, twos_complement};
-use crate::riscv::{Csr, Extension, FReg, Instruction, PrivilegeLevel, XReg, Xlen};
+use crate::riscv::{Csr, Extension, FReg, Instruction, Opcode, PrivilegeLevel, XReg, Xlen};
 use crate::spike::ArchState;
 use crate::target::Target;
 use crate::utils::cut_cake_randomly;
@@ -29,6 +31,9 @@ pub const MISMATCH_EXIT_CODE: i32 = 0xaa;
 /// HTIF exit code reported by `_fail`, which an entangled branch or indirect
 /// jump reaches when it goes the wrong way.
 pub const DIVERGENCE_EXIT_CODE: i32 = 0xab;
+
+/// Deepest nesting of calls.
+const MAX_CALL_DEPTH: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct HartState {
@@ -88,6 +93,9 @@ pub struct Hart {
     init_values: Vec<u64>,
     /// Constants `_check` compares against, see [`check_values`].
     check_values: Vec<u64>,
+    /// Start of the code area and its bytes between blocks, see [`Hart::place`].
+    area: u64,
+    fill: Vec<u8>,
 }
 
 impl Hart {
@@ -110,14 +118,18 @@ impl Hart {
     }
 
     /// Generate the hart's code, drawing each workload block's opcodes from
-    /// `weights`. With `self_check`, a self-check block holding
+    /// `weights`. Every block ends with a way to the next one in execution
+    /// order: a taken branch or `jalr` site, a `jal`/`c.j`, a call (`jal ra`)
+    /// or, inside a callee, a return (`ret`/`c.jr ra`) into the block placed
+    /// right after the caller. With `self_check`, a self-check block holding
     /// placeholder values precedes the exit; patch the reference values in with
-    /// [`Hart::set_expected`] before encoding the final program. With
-    /// `entangle` (holding the mid-block guard threshold), the workload holds
-    /// entanglement sites; [`Hart::link`] them, then [`Hart::patch_sites_from_spike`]
-    /// with Spike's register values. With `golden_section` (RV64 only), sites,
-    /// `_init` and `_check` load their constants from a `.golden` section of
-    /// [`Hart::golden_slots`] slots, which the caller reserves before linking.
+    /// [`Hart::set_final_expected_values`] before encoding the final program.
+    /// With `entangle` (holding the mid-block guard threshold), the workload
+    /// holds entanglement sites; [`Hart::place`] and [`Hart::link`] them, then
+    /// [`Hart::patch_entanglements`] with Spike's register values. With
+    /// `golden_section` (RV64 only), sites, `_init` and `_check` load their
+    /// constants from a `.golden` section of [`Hart::golden_slots`] slots,
+    /// which the caller reserves before linking.
     pub fn run(
         &mut self,
         rng: &mut (impl Rng + ?Sized),
@@ -133,37 +145,75 @@ impl Hart {
         let reserved: Vec<_> = self.state.mem_bases.bases.iter().map(|base| base.reg).collect();
         let mut sites =
             entangle.map(|threshold| SiteBuilder::new(target, threshold, reserved.clone(), golden_section));
-        for bb in self.bbs.iter_mut() {
-            bb.run(rng, target, state, &mut self.state, weights, sites.as_mut())?;
-        }
-        self.site_slots = sites.as_ref().map_or(0, SiteBuilder::golden_slots);
         self.pooled = golden_section;
         let tohost = state.memory.get(".tohost")?.region.start;
 
-        // Layout of the hart's code and the symbol marking each part:
+        // Code parts in execution order and the symbol marking each:
         //   _start         point mtvec at the handler (entry point)
         //   _init          randomize registers, the memory bases getting their addresses
-        //   _stimulus      workload
+        //   _stimulus      workload, its blocks scattered over the code area
         //   _check         (optional) compare all registers against Spike's values
         //   _exit          report the check's verdict (or success) to tohost and spin
         //   _fail          (with entanglement) report a divergence to tohost and spin
         //                  (padding to 4 bytes, never executed)
         //   _trap_handler  report mcause to tohost and spin
-        // mtvec is set first so a trap anywhere after it terminates the test.
-        // `_start` is exported by the ELF encoder for the whole code, so the
-        // mtvec block carries no label of its own.
+        // All but the workload are placed back to back, in this order, at the
+        // start of the code area. mtvec is set first so a trap anywhere after
+        // it terminates the test. `_start` is exported by the ELF encoder for
+        // the whole code, so the mtvec block carries no label of its own. The
+        // mtvec and `_init` blocks are filled in once the workload is known.
+        if self.bbs.is_empty() {
+            self.bbs.push(BasicBlock::new(0, false, 0));
+        }
+        self.bbs[0].label = Some(STIMULUS_LABEL.into());
+        self.bbs.splice(0..0, [BasicBlock::default(), BasicBlock::default()]);
+
+        // A call makes the next block a callee, which returns into the block
+        // placed right after the caller. Calls nest up to MAX_CALL_DEPTH;
+        // the innermost callee returns first.
+        let call_proba = rng.random_range(0.0..0.4);
+        let mut callers = Vec::new();
+        let mut index = 2;
+        while index < self.bbs.len() {
+            let last = index + 1 == self.bbs.len();
+            let bb = &mut self.bbs[index];
+            if let Some(left) = bb.run(rng, target, state, &mut self.state, weights, sites.as_mut())? {
+                // A control-flow site ended the block. The rest of its budget
+                // starts the next one; the last block also needs a plain jump,
+                // the only way out sure to reach `_check`.
+                if left > 0 || last {
+                    self.bbs.insert(index + 1, BasicBlock::new(index + 1, false, left));
+                }
+            } else if !callers.is_empty() && (last || rng.random_bool(0.5)) {
+                bb.ret(use_compressed(target, &[Opcode::CJr], rng));
+                if last {
+                    self.bbs.push(BasicBlock::new(index + 1, false, 0));
+                }
+                self.bbs[index + 1].after = callers.pop();
+            } else {
+                let call = !last && callers.len() < MAX_CALL_DEPTH && rng.random_bool(call_proba);
+                let compressed = !call && !last && use_compressed(target, &[Opcode::CJ], rng);
+                bb.jump(if call { XReg::RA } else { XReg::ZERO }, compressed);
+                if call {
+                    callers.push(index);
+                }
+            }
+            index += 1;
+        }
+        self.site_slots = sites.as_ref().map_or(0, SiteBuilder::golden_slots);
+
         self.init_values = init_values(rng, target, &self.state.mem_bases);
         let mut init = init_block(&self.init_values, target, self.init_slot())?;
         init.label = Some(INIT_LABEL.into());
-        if let Some(first) = self.bbs.first_mut() {
-            first.label = Some(STIMULUS_LABEL.into());
-        }
-        let check = if self_check {
+        init.after = Some(0);
+        init.jump(XReg::ZERO, false);
+        self.bbs[1] = init;
+
+        let mut epilogue = Vec::new();
+        if self_check {
             self.check_values = check_values(&ArchState::default(), target);
-            check_block(&self.check_values, target, self.check_slot())?
-        } else {
-            BasicBlock::default()
-        };
+            epilogue.push(check_block(&self.check_values, target, self.check_slot())?);
+        }
         let verdict = if self_check {
             // The check leaves 0 or MISMATCH_EXIT_CODE in x5.
             Instruction::Slli {
@@ -178,75 +228,56 @@ impl Hart {
                 imm: 1,
             }
         };
-        let exit = report_to_tohost(verdict, tohost, target.xlen);
-        let fail = if entangle.is_some() {
-            report_to_tohost(
-                Instruction::Addi {
-                    rd: XReg::X5,
-                    rs1: XReg::ZERO,
-                    imm: DIVERGENCE_EXIT_CODE << 1,
-                },
-                tohost,
-                target.xlen,
-            )
-        } else {
-            Vec::new()
-        };
+        epilogue.push(BasicBlock {
+            instrs: report_to_tohost(verdict, tohost, target.xlen),
+            label: Some(EXIT_LABEL.into()),
+            ..Default::default()
+        });
+        if entangle.is_some() {
+            let fail = Instruction::Addi {
+                rd: XReg::X5,
+                rs1: XReg::ZERO,
+                imm: DIVERGENCE_EXIT_CODE << 1,
+            };
+            epilogue.push(BasicBlock {
+                instrs: report_to_tohost(fail, tohost, target.xlen),
+                label: Some(FAIL_LABEL.into()),
+                ..Default::default()
+            });
+        }
         let before_handler = code_size(&set_mtvec(0))
-            + code_size(&init.instrs)
-            + self.bbs.iter().map(|bb| code_size(&bb.instrs)).sum::<usize>()
-            + code_size(&check.instrs)
-            + code_size(&exit)
-            + code_size(&fail);
+            + code_size(&self.bbs[1].instrs)
+            + epilogue.iter().map(|bb| code_size(&bb.instrs)).sum::<usize>();
         let mut padding = Vec::new();
         if before_handler % 4 != 0 {
             // Only reachable with C enabled; never executed.
             padding.push(Instruction::cnop());
         }
         let handler_offset = before_handler + code_size(&padding);
-
-        self.state.mtvec_valid = true;
-        self.bbs.splice(
-            0..0,
-            [
-                BasicBlock {
-                    instrs: set_mtvec(handler_offset as i64).to_vec(),
-                    ..Default::default()
-                },
-                init,
-            ],
-        );
-        if self_check {
-            self.bbs.push(check);
-        }
-        self.bbs.push(BasicBlock {
-            instrs: exit,
-            label: Some(EXIT_LABEL.into()),
-            ..Default::default()
-        });
-        if entangle.is_some() {
-            self.bbs.push(BasicBlock {
-                instrs: fail,
-                label: Some(FAIL_LABEL.into()),
-                ..Default::default()
-            });
-        }
-        self.bbs.push(BasicBlock {
+        epilogue.push(BasicBlock {
             instrs: padding,
             ..Default::default()
         });
-        self.bbs.push(BasicBlock {
+        epilogue.push(BasicBlock {
             instrs: trap_handler(tohost, target.xlen),
             label: Some(TRAP_HANDLER_LABEL.into()),
             ..Default::default()
         });
+        self.bbs[0].instrs = set_mtvec(handler_offset as i64).to_vec();
+        self.state.mtvec_valid = true;
+        // The epilogue follows `_init`, each block right after the previous one.
+        let mut prev = 1;
+        for mut bb in epilogue {
+            bb.after = Some(prev);
+            prev = self.bbs.len();
+            self.bbs.push(bb);
+        }
         Ok(())
     }
 
-    /// Byte offset of the self-check block from the hart's first instruction.
-    pub fn get_self_check_code_offset(&self) -> Result<usize> {
-        let index = self.get_self_check_bb_index()?;
-        Ok(self.block_offset(index))
+    /// Address of the self-check block.
+    pub fn self_check_pc(&self) -> Result<u64> {
+        Ok(self.bbs[self.get_self_check_bb_index()?].addr)
     }
 
     /// Number of constants loaded from `.golden`.
@@ -282,45 +313,138 @@ impl Hart {
         slots.iter().flat_map(|slot| slot.to_le_bytes()).collect()
     }
 
-    /// Fix the code's addresses, given that it starts at `text_addr` and
-    /// `.golden` at `golden_addr`, and render the sites' placeholders.
-    pub fn link(&mut self, text_addr: u64, golden_addr: Option<u64>, xlen: Xlen) -> Result<()> {
-        let fail_addr = self
-            .label_index(FAIL_LABEL)
-            .map(|fail| text_addr + self.block_offset(fail) as u64);
-        let mut block_addr = text_addr;
-        for bb in self.bbs.iter_mut() {
+    /// Place the blocks at random in the code area of `size` bytes at
+    /// `start`. Blocks chained by [`BasicBlock::after`] go back to back, each
+    /// chain where the jump into it reaches; the first one, all code but the
+    /// workload, at `start`. The gaps get random bytes, which wrong-path
+    /// fetches decode.
+    pub fn place(&mut self, start: u64, size: u64, align: u64, rng: &mut (impl Rng + ?Sized)) -> Result<()> {
+        let end = start + size;
+        let sizes: Vec<u64> = self.bbs.iter().map(|bb| code_size(&bb.instrs) as u64).collect();
+        let mut follower = vec![None; self.bbs.len()];
+        for (index, bb) in self.bbs.iter().enumerate() {
+            if let Some(after) = bb.after {
+                follower[after] = Some(index);
+            }
+        }
+        let chains: Vec<Vec<usize>> = (0..self.bbs.len())
+            .map(|head| std::iter::successors(Some(head), |&index| follower[index]).collect())
+            .collect();
+        // Whether a block jumps to the next one with less than the whole
+        // area's reach. Only a chain's last block can: the others are callers
+        // (`jal ra`) or fixed code.
+        let short: Vec<bool> = self
+            .bbs
+            .iter()
+            .map(|bb| bb.sites.iter().any(|site| site.reach().is_some_and(|reach| reach < 1 << 20)))
+            .collect();
+        // Bytes of a head's chain and, back to back after it, of every chain
+        // it reaches with short jumps. Placing them right after one another
+        // always works, so a head only goes where its `total` fits.
+        let mut total = vec![0; self.bbs.len()];
+        for head in (0..self.bbs.len()).rev() {
+            let last = *chains[head].last().expect("a chain holds its head");
+            total[head] = chains[head].iter().map(|&index| sizes[index]).sum::<u64>()
+                + if short[last] { total[last + 1] } else { 0 };
+        }
+        // Occupied ranges, start -> end.
+        let mut used = BTreeMap::new();
+        let mut placed = vec![false; self.bbs.len()];
+        for first in 0..self.bbs.len() {
+            let mut head = first;
+            // Place `head`'s chain, then right away the chain its last block
+            // reaches with a short jump, and so on, while the room is free.
+            while self.bbs[head].after.is_none() && !placed[head] {
+                // The previous block in execution order is placed already.
+                let (lo, hi) = match head.checked_sub(1).map(|prev| &self.bbs[prev]) {
+                    None => (start, start),
+                    Some(prev) => match prev.sites.iter().find_map(|site| Some((site.at, site.reach()?))) {
+                        Some((at, reach)) => {
+                            let pc = prev.addr + code_size(&prev.instrs[..at]) as u64;
+                            (pc.saturating_sub(reach), pc + reach - 2)
+                        }
+                        None => (start, end),
+                    },
+                };
+                let len = total[head];
+                let addr = free_spot(&used, start, end, lo, hi, len, align, rng)
+                    .ok_or_else(|| anyhow!("no room for {len} bytes of code within reach; the code area is too full"))?;
+                let mut at = addr;
+                for &index in &chains[head] {
+                    self.bbs[index].addr = at;
+                    placed[index] = true;
+                    at += sizes[index];
+                }
+                used.insert(addr, at);
+                let last = *chains[head].last().expect("a chain holds its head");
+                if !short[last] {
+                    break;
+                }
+                head = last + 1;
+            }
+        }
+        self.area = start;
+        self.fill = vec![0; size as usize];
+        rng.fill(&mut self.fill[..]);
+        Ok(())
+    }
+
+    /// The code area in address order: the blocks, and the random fill as
+    /// raw halfwords between them.
+    pub fn image(&self) -> Vec<BasicBlock> {
+        let raw = |from: u64, to: u64| BasicBlock {
+            instrs: self.fill[(from - self.area) as usize..(to - self.area) as usize]
+                .chunks(2)
+                .map(|pair| Instruction::compressed(u16::from_le_bytes([pair[0], pair[1]])))
+                .collect(),
+            ..Default::default()
+        };
+        let mut blocks: Vec<_> = self.bbs.iter().collect();
+        blocks.sort_by_key(|bb| (bb.addr, code_size(&bb.instrs)));
+        let mut image = Vec::new();
+        let mut at = self.area;
+        for bb in blocks {
+            image.push(raw(at, bb.addr));
+            image.push(bb.clone());
+            at = bb.addr + code_size(&bb.instrs) as u64;
+        }
+        image.push(raw(at, self.area + self.fill.len() as u64));
+        image
+    }
+
+    /// Fix the code's addresses, given the blocks' places and that `.golden`
+    /// starts at `golden_addr`, and render the sites' placeholders.
+    pub fn link(&mut self, golden_addr: Option<u64>, xlen: Xlen) -> Result<()> {
+        let fail_addr = self.label_index(FAIL_LABEL).map(|fail| self.bbs[fail].addr);
+        let next: Vec<_> = self.bbs.iter().skip(1).map(|bb| Some(bb.addr)).chain([None]).collect();
+        for (bb, next_addr) in self.bbs.iter_mut().zip(next) {
             for pool_ref in &bb.pool_refs {
-                pool_ref.link(&mut bb.instrs, block_addr, golden_addr)?;
+                pool_ref.link(&mut bb.instrs, bb.addr, golden_addr)?;
             }
             for site in bb.sites.iter_mut() {
-                site.link(&mut bb.instrs, block_addr, fail_addr, golden_addr)?;
+                site.link(&mut bb.instrs, bb.addr, next_addr, fail_addr, golden_addr)?;
             }
             bb.render_sites(xlen)?;
-            block_addr += code_size(&bb.instrs) as u64;
         }
         Ok(())
     }
 
-    /// Byte offsets, from the hart's first instruction, at which Spike must
-    /// report the registers of each entanglement site, in program order. The
-    /// workload is executed once, front to back, so this is also the order in
-    /// which they are reached.
-    pub fn probe_offsets(&self, xlen: Xlen) -> Vec<usize> {
-        let mut offsets = Vec::new();
-        let mut block_offset = 0;
+    /// Addresses at which Spike must report the registers of each
+    /// entanglement site, in the order they are reached: each block runs
+    /// once, in execution order.
+    pub fn probe_pcs(&self, xlen: Xlen) -> Vec<u64> {
+        let mut pcs = Vec::new();
         for bb in &self.bbs {
             for site in &bb.sites {
                 if let Some(index) = site.probe_index(xlen) {
-                    offsets.push(block_offset + code_size(&bb.instrs[..index]));
+                    pcs.push(bb.addr + code_size(&bb.instrs[..index]) as u64);
                 }
             }
-            block_offset += code_size(&bb.instrs);
         }
-        offsets
+        pcs
     }
 
-    /// Patch Spike's register values, one per site in [`Hart::probe_offsets`]
+    /// Patch Spike's register values, one per site in [`Hart::probe_pcs`]
     /// order, into the entanglement sites. Sites keep their sizes.
     pub fn patch_entanglements(
         &mut self,
@@ -343,10 +467,6 @@ impl Hart {
         }
         ensure!(states.next().is_none(), "more register values than sites");
         Ok(())
-    }
-
-    fn block_offset(&self, index: usize) -> usize {
-        self.bbs[..index].iter().map(|bb| code_size(&bb.instrs)).sum()
     }
 
     fn label_index(&self, label: &str) -> Option<usize> {
@@ -640,5 +760,76 @@ fn random_xlen(rng: &mut (impl Rng + ?Sized), xlen: Xlen) -> i64 {
     match xlen {
         Xlen::X32 => rng.random::<i32>().into(),
         Xlen::X64 => rng.random::<i64>(),
+    }
+}
+
+/// A random `align`-aligned start in `lo..=hi` for `len` bytes that stay in
+/// `start..end` and off the `used` ranges, if any.
+fn free_spot(
+    used: &BTreeMap<u64, u64>,
+    start: u64,
+    end: u64,
+    lo: u64,
+    hi: u64,
+    len: u64,
+    align: u64,
+    rng: &mut (impl Rng + ?Sized),
+) -> Option<u64> {
+    // The valid starts in each gap, as (first, count); then a uniform pick
+    // among all of them, so big gaps are not crowded out by small ones.
+    let mut spans = Vec::new();
+    let mut gap = start;
+    for (&from, &to) in used.iter().chain(std::iter::once((&end, &end))) {
+        let first = gap.max(lo).next_multiple_of(align);
+        let last = from.saturating_sub(len).min(hi);
+        if first <= last {
+            spans.push((first, (last - first) / align + 1));
+        }
+        gap = to;
+    }
+    let total: u64 = spans.iter().map(|(_, count)| count).sum();
+    if total == 0 {
+        return None;
+    }
+    let mut pick = rng.random_range(0..total);
+    for (first, count) in spans {
+        if pick < count {
+            return Some(first + pick * align);
+        }
+        pick -= count;
+    }
+    unreachable!("pick < total")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{SeedableRng, rngs::StdRng};
+
+    #[test]
+    fn free_spot_stays_in_reach_and_off_used_ranges() {
+        let mut rng = StdRng::seed_from_u64(0);
+        let used = BTreeMap::from([(0x100, 0x180), (0x200, 0x300)]);
+        for _ in 0..1000 {
+            let at = free_spot(&used, 0, 0x400, 0xf0, 0x2a0, 0x40, 2, &mut rng).unwrap();
+            assert!((0xf0..=0x2a0).contains(&at) && at % 2 == 0);
+            assert!(used.iter().all(|(&from, &to)| at + 0x40 <= from || at >= to));
+        }
+        // The only gap in reach, 0x180..0x200, is a byte too small.
+        assert_eq!(free_spot(&used, 0, 0x400, 0x101, 0x1c0, 0x81, 2, &mut rng), None);
+    }
+
+    #[test]
+    fn scattered_programs_place_and_encode() {
+        use crate::options::CommonOpts;
+        use crate::riscv::Extension::{C, I, M, Zicsr};
+        for seed in 0..20 {
+            let mut opts = CommonOpts::default();
+            opts.isa = vec![I, M, C, Zicsr];
+            opts.num_instrs = 4096;
+            opts.no_self_check = true;
+            opts.seed = Some(seed);
+            crate::orchestrator::generate(&opts).unwrap();
+        }
     }
 }

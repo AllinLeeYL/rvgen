@@ -12,9 +12,10 @@ use rand::distr::{Distribution, weighted::WeightedIndex};
 use crate::riscv::{InstructionClass, Opcode};
 use crate::target::Target;
 
-/// Opcodes generated as control flow: the six base conditional branches and
-/// `jalr`. They only exist as entanglement sites (see [`crate::entangle`]), so
-/// they are drawn like any other opcode, but only when entangling.
+/// Opcodes generated as control flow: the six base conditional branches,
+/// `jalr`, and the compressed `c.beqz`, `c.bnez`, `c.j`, `c.jr` and `c.jalr`.
+/// They only exist as entanglement sites (see [`crate::entangle`]), so they
+/// are drawn like any other opcode, but only when entangling.
 pub fn is_control_flow(opcode: Opcode) -> bool {
     matches!(
         opcode,
@@ -25,6 +26,11 @@ pub fn is_control_flow(opcode: Opcode) -> bool {
             | Opcode::Bltu
             | Opcode::Bgeu
             | Opcode::Jalr
+            | Opcode::CBeqz
+            | Opcode::CBnez
+            | Opcode::CJ
+            | Opcode::CJr
+            | Opcode::CJalr
     )
 }
 
@@ -38,7 +44,7 @@ pub fn unweightable_reason(opcode: Opcode) -> Option<&'static str> {
         opcode.class(),
         InstructionClass::Branch | InstructionClass::Jal | InstructionClass::Jalr
     ) {
-        return Some("only the base conditional branches and jalr are generated");
+        return Some("only the conditional branches, jalr, c.j, c.jr and c.jalr are generated");
     }
     matches!(
         opcode,
@@ -96,7 +102,7 @@ impl InstrWeights {
             ensure!(
                 weight == 0.0
                     || entangle
-                    || !matches!(class, InstructionClass::Branch | InstructionClass::Jalr),
+                    || !matches!(class, InstructionClass::Branch | InstructionClass::Jal | InstructionClass::Jalr),
                 "class {class:?} is only generated with entanglement (self-check on, \
                  no --no-entangle), so it cannot be given a nonzero weight"
             );
@@ -261,7 +267,13 @@ mod tests {
         let rejected = |opcode| spec(&[], &[(opcode, 1.0)]).checked(&t, true).is_err();
         assert!(rejected(Opcode::Ecall), "excluded for safety");
         assert!(rejected(Opcode::Jal), "never generated");
-        assert!(rejected(Opcode::CBeqz), "compressed branches are never generated");
+        assert!(rejected(Opcode::CBeqz), "C is not enabled");
+        assert!(rejected(Opcode::CJal), "never generated");
+        let c = target(&[Extension::I, Extension::C, Extension::Zicsr], &[]);
+        for opcode in [Opcode::CBeqz, Opcode::CBnez, Opcode::CJ, Opcode::CJr, Opcode::CJalr] {
+            assert!(spec(&[], &[(opcode, 1.0)]).checked(&c, true).is_ok(), "{opcode}");
+            assert!(spec(&[], &[(opcode, 1.0)]).checked(&c, false).is_err(), "{opcode} needs entanglement");
+        }
         assert!(rejected(Opcode::FaddS), "F is not enabled");
         // Zero is always accepted: it excludes nothing that could appear.
         assert!(spec(&[], &[(Opcode::Ecall, 0.0), (Opcode::FaddS, 0.0)]).checked(&t, true).is_ok());

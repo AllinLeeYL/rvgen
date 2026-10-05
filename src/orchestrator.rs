@@ -2,10 +2,10 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, ensure};
-use rand::{SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use crate::elf::{Elf, ElfSymbol, HostInterface, STT_OBJECT, write_executable};
-use crate::entangle::GOLDEN_SLOT_SIZE;
+use crate::entangle::{GOLDEN_SLOT_SIZE, code_size};
 use crate::hart::Hart;
 use crate::memory::{MemoryLayout, MemoryRegion, Permissions, Section};
 use crate::options::{CommonOpts, ManyOpts, OneOpts};
@@ -17,6 +17,11 @@ use crate::weights::InstrWeights;
 /// Data section holding the constants the code loads: the entanglement sites'
 /// golden values, `_init`'s values and `_check`'s expected values.
 const GOLDEN_SECTION: &str = ".golden";
+
+/// Bounds of the code area's size, drawn log-uniformly per program as in
+/// Cascade. Every block is within `jal` reach (1 MiB) of `_fail`.
+const MIN_CODE_AREA: u64 = 16 << 10;
+const MAX_CODE_AREA: u64 = 1 << 20;
 
 #[derive(Default)]
 pub struct GlobalState {
@@ -107,18 +112,40 @@ impl Orchestrator {
             // Workload accesses never target it, so only Spike's values land there.
             golden.private = true;
         }
+        // The code area goes at the bottom of RAM, below the data reserved
+        // from the top, at least four times the code so blocks find room within reach.
+        if let Some(hart) = self.harts.first_mut() {
+            let code: u64 = hart.bbs.iter().map(|bb| code_size(&bb.instrs) as u64).sum();
+            let min = (4 * code).max(MIN_CODE_AREA);
+            ensure!(
+                min <= MAX_CODE_AREA,
+                "{code} bytes of code need more than the {MAX_CODE_AREA}-byte code area; lower --num-instrs"
+            );
+            let ratio = (MAX_CODE_AREA as f64 / min as f64).powf(self.rng.random::<f64>());
+            let size = (min as f64 * ratio) as u64 / 4 * 4;
+            let start = self.target.physical_memory.start;
+            let region = MemoryRegion { start, size, permissions: Permissions::RX };
+            self.state.memory.add(Section {
+                name: ".text".into(),
+                alignment: 4,
+                permissions: Permissions::RX,
+                region,
+                private: true,
+            });
+            let align = self.target.instruction_alignment() as u64;
+            hart.place(start, size, align, &mut self.rng)?;
+        }
         Ok(())
     }
 
     /// Encode the ELF image.
-    /// Return: <bytecodes, the address of core 0's ".text" section>
-    fn encode(&self) -> Result<(Vec<u8>, u64)> {
+    fn encode(&self) -> Result<Vec<u8>> {
         // ELF output packages core 0's workload
         let Some(hart) = self.harts.first() else {
-            return Ok((Vec::new(), 0));
+            return Ok(Vec::new());
         };
         let mut elf = Elf::new(&self.target, &self.state.memory)?;
-        elf.add_code(&hart.bbs)?;
+        elf.add_code(&hart.image())?;
         if self.state.memory.get(GOLDEN_SECTION).is_ok() {
             let golden = hart.golden_bytes();
             let section = elf.fill(GOLDEN_SECTION, &golden)?;
@@ -130,16 +157,13 @@ impl Orchestrator {
                 symbol_type: STT_OBJECT,
             })?;
         }
-        let text = elf.section_index(".text").expect("add_code places .text");
-        let text_addr = elf.sections()[text].addr;
         elf.apply(HostInterface)?;
-        Ok((elf.finish()?, text_addr))
+        elf.finish()
     }
 
     /// Fix the code's absolute addresses, which the code needs before it can
-    /// run. Return the address of core 0's ".text" section.
-    fn link(&mut self) -> Result<u64> {
-        let (_, text_addr) = self.encode()?;
+    /// run.
+    fn link(&mut self) -> Result<()> {
         let golden_addr = self
             .state
             .memory
@@ -147,27 +171,21 @@ impl Orchestrator {
             .ok()
             .map(|section| section.region.start);
         if let Some(hart) = self.harts.first_mut() {
-            hart.link(text_addr, golden_addr, self.target.xlen)?;
+            hart.link(golden_addr, self.target.xlen)?;
         }
-        Ok(text_addr)
+        Ok(())
     }
 
     /// Resolve the self-check values against spike. 
     /// These values is only known after a spike run.
     /// This func invoke spike, retrieve these values, and patch the program.
-    fn resolve_self_check(&mut self, spike: &Spike, text_addr: u64) -> Result<Vec<u8>> {
-        let (draft, draft_text_addr) = self.encode()?;
-        ensure!(draft_text_addr == text_addr, "code moved while linking sites");
-
+    fn resolve_self_check(&mut self, spike: &Spike) -> Result<Vec<u8>> {
+        let draft = self.encode()?;
         let hart = &mut self.harts[0];
 
-        // Resolve PC addresses where spike should report its register state.
-        let mut pcs: Vec<u64> = hart
-            .probe_offsets(self.target.xlen)
-            .into_iter()
-            .map(|offset| text_addr + offset as u64)
-            .collect();
-        pcs.push(text_addr + hart.get_self_check_code_offset()? as u64);
+        // PCs where spike should report its register state.
+        let mut pcs = hart.probe_pcs(self.target.xlen);
+        pcs.push(hart.self_check_pc()?);
 
         // Retrieve architecture state from goldem model -- spike
         let mut states = spike
@@ -180,8 +198,7 @@ impl Orchestrator {
         // Patch the self-check site at the end.
         hart.set_final_expected_values(&expected, &self.target)?;
 
-        let (image, final_text_addr) = self.encode()?;
-        ensure!(final_text_addr == text_addr, "code moved while patching the self-check");
+        let image = self.encode()?;
         let code = spike.exit_code(&image)?;
         ensure!(
             code == 0,
@@ -221,11 +238,11 @@ pub fn generate(opts: &CommonOpts) -> Result<Vec<u8>> {
 
     // generate code -- it allocate memory address on the fly
     orchestrator.run()?;
-    let text_addr = orchestrator.link()?;
+    orchestrator.link()?;
     if self_check {
-        orchestrator.resolve_self_check(&spike, text_addr)
+        orchestrator.resolve_self_check(&spike)
     } else {
-        Ok(orchestrator.encode()?.0)
+        orchestrator.encode()
     }
 }
 

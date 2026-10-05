@@ -60,6 +60,39 @@ The orchestrator randomly partitions each core's budget into basic blocks of
 1–32 instructions. Block count is determined automatically, and block budgets
 sum to the requested instruction count for each core.
 
+## Control flow
+
+The blocks are scattered at random over a code area at the RAM base, sized
+per program log-uniformly between four times the code (at least 16 KiB) and
+1 MiB, as in Cascade. All other code (`_start` to `_trap_handler`) sits back
+to back at its start. The bytes between blocks are random, so fetches down a
+mispredicted path decode junk. Each block runs once and ends with a way to
+the next one in execution order, wherever it is placed:
+
+| Exit | Code | Reach |
+|---|---|---|
+| taken branch site | `b<cc> r1, r2, next; jal _fail` | ±4 KiB |
+| taken compressed branch site | `c.beqz`/`c.bnez r1, next; jal _fail` | ±256 B |
+| indirect jump site | `rt = golden ^ ...; jalr rd, rt`, `c.jr rt` or `c.jalr rt` | anywhere |
+| jump site | `c.j next` | ±2 KiB |
+| jump | `jal x0, next` or `c.j next` (50% with C) | ±1 MiB / ±2 KiB |
+| call | `jal ra, next`: the next block is a callee | ±1 MiB |
+| return | `auipc ra; addi ra; ret` (or `c.jr ra`, 50% with C), inside a callee | the caller |
+
+Sites are drawn from the weights (see [Instruction weights](#instruction-weights)):
+a drawn branch, `jalr`, `c.jr`, `c.jalr` or `c.j` ends its block when it
+jumps, and the rest of the block's budget starts a new one. A block without
+one ends in a jump, or with a per-program probability of 0–40% a call. Inside
+a callee each block returns with probability 1/2; the block after the return
+is placed right after the caller, so `ret` lands on it. Calls nest up to 8
+deep. Nested calls and site code may overwrite `ra`, so a return first points
+it back at the caller's next block. Indirect jumps go through `ra`/`t0` half
+of the time, so they also push and pop the return-address stack, mostly to
+targets it mispredicts. A not-taken branch site targets a random decoy within
+its reach. A block reached with a short jump is placed right away, where
+there is also room for the blocks it reaches with short jumps in turn, so
+placement never runs out of reach.
+
 ## Instruction weights
 
 Every instruction in the workload is drawn from a weighted distribution over
@@ -85,25 +118,29 @@ Weights are relative (no need to sum to 1) and are given on the command line:
 - A weight of 0 excludes the opcode. Weights must be finite and not negative.
   A nonzero weight that could never take effect is an error, not a silent
   no-op: an opcode the ISA/XLEN does not support, one in `--disabled-instrs`,
-  one the generator never emits (`jal`, `ecall`, `ebreak`, `mret`, `sret`,
-  compressed jumps and branches), or a branch without entanglement.
+  one the generator never emits (`jal`, `c.jal`, `ecall`, `ebreak`, `mret`,
+  `sret`), or control flow without entanglement.
 - The weights count *workload* instructions. The code the generator adds
   around them (address computation, guards, the self-check, and so on) is not
   weighted and always uses its own instructions, such as `xor`, `beq`, `bne`
   and `jal`. A weight of 0 for `beq` therefore removes `beq` from the
   workload, not from the guards.
 
-**Branch frequency.** The six conditional branches and `jalr` are drawn like
-any other opcode, so their share of the total weight is their density: raise
+**Branch frequency.** The six conditional branches, `jalr`, and with C
+`c.beqz`, `c.bnez`, `c.j`, `c.jr` and `c.jalr` are drawn like any other
+opcode, so their share of the total weight is their density: raise
 `--class-weight branch=` or `--weight jalr=` for more control flow, set it to 0
 for none. Each one becomes an entanglement site (see below), which needs the
 self-check; setting it without entanglement is an error. Unless named, these
-seven opcodes get a quarter of the default weight each, close to the density
-before they were weighted. `Branch` and `Jalr` are separate classes. The
-branch weights add up to the density, but which of the six a site uses also
-depends on the values Spike observed, since the opcode must go the planned
-way: among the opcodes that do, the weights choose. Weighting a single branch
-opcode therefore biases the mix without making it exclusive.
+opcodes get a quarter of the default weight each. `Branch` (with `c.beqz` and
+`c.bnez`), `Jal` (`c.j`) and `Jalr` (with `c.jr` and `c.jalr`) are separate
+classes. The branch weights add up to the density, but which opcode a site
+uses also depends on the values Spike observed, since it must go the planned
+way: among the opcodes that do, the weights choose (a base branch site picks
+among the six, a compressed one between `c.beqz` and `c.bnez`). Weighting a
+single branch opcode therefore biases the mix without making it exclusive.
+The generator's own block-ending jumps, returns and guards are not weighted
+and use their compressed forms half of the time.
 
 The weights are plain data, so another program can build the command line (the
 full weight vector is a few kilobytes) or call the library.
@@ -138,7 +175,7 @@ target:
 |---|---|
 | `_start` | entry point; points `mtvec` at `_trap_handler` |
 | `_init` | randomizes CSRs, FP registers, then x1-x31, the memory base registers getting their addresses |
-| `_stimulus` | the random workload (all basic blocks) |
+| `_stimulus` | the random workload's first block (the others are unlabeled, see [Control flow](#control-flow)) |
 | `_check` | the self-check (omitted with `--no-self-check`) |
 | `_exit` | reports the verdict to `tohost` and spins |
 | `_fail` | reports a control-flow divergence to `tohost` and spins (omitted with `--no-entangle`) |
@@ -217,15 +254,15 @@ is its *golden value*, decided by Spike, the golden model.
 
 | Site | Code | Catches a wrong value by |
 |---|---|---|
-| branch | `b<cc> r1, r2, +8; jal _fail` (`cc` chosen from Spike's values) | going the wrong way |
+| branch | taken: `b<cc> r1, r2, next; jal _fail`; not taken: `b<cc> r1, r2, decoy` (`cc` chosen from Spike's values; `c.beqz`/`c.bnez r1` compares one of x8–x15 with 0) | going the wrong way |
 | indirect jump | `rt = golden; rt ^= r1; ...; jalr rd, rt; jal _fail` | jumping to a wrong target |
-| guard | `acc = golden; acc ^= r1; ...; acc ^= rk; beq/bne acc, x0; jal _fail` | any difference, exactly |
+| guard | `acc = golden; acc ^= r1; ...; acc ^= rk; beq/bne acc, x0; jal _fail` (`c.beqz`/`c.bnez` half of the time with C) | any difference, exactly |
 
-Every block ends with an optional branch or indirect jump (50%) and a guard.
-Every memory access gets an address site (replacing the plain base load),
-and the workload's weighted draws of branches and `jalr` become branch and
-jump sites wherever they fall in a block (see
-[Instruction weights](#instruction-weights)).
+Every block ends with a guard over the registers it wrote, unless a branch
+or indirect jump site ended it (see [Control flow](#control-flow)); its
+registers are then checked by the next block's guards. The workload's
+weighted draws of branches and `jalr` become branch and jump sites wherever
+they fall in a block (see [Instruction weights](#instruction-weights)).
 The golden value is the target XORed with the `ri`'s expected values (0 for a
 guard), and branch opcodes are picked so the planned direction holds. Sites
 use *fresh* registers, those the workload wrote since the last guard: branch
@@ -290,7 +327,7 @@ Use `./target/release/rvgen --help`, `one --help`, or `many --help` to inspect t
 and RNG. The CLI reserves 8-byte `.tohost` and `.fromhost` sections aligned to
 64 bytes, scratch, and optional SMC memory at the top of RAM, then `.golden`
 below them once generation knows how many constants the code loads, and
-places core 0's generated code at the RAM base. `Elf::new(&target).encode(bbs,
+reserves core 0's code area at the RAM base. `Elf::new(&target).encode(bbs,
 &memory)` preserves the supplied instruction order, section addresses, sizes,
 alignment, and permissions. Other supplied sections are zero-filled until
 filled with `Elf::fill` (as `.golden` is). The ELF

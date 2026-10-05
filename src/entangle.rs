@@ -14,10 +14,16 @@
 //!   materialized inline with [`load_imm_fixed`], which is as short there.
 //! - A *branch* site compares two workload registers. Its opcode is picked
 //!   once Spike tells us their values, so the planned direction is the right
-//!   one; the wrong direction lands on a jump to `_fail`.
-//! - A *guard* tests a value site's accumulator against zero with `beq`/`bne`.
-//!   Unlike the others, which only notice faults that move a jump target or a
-//!   comparison far enough, it notices any wrong value among its `dep_i`.
+//!   one. A taken branch ends its block and jumps to the next one, falling
+//!   through to a jump to `_fail`; a not-taken one targets a random decoy
+//!   nearby, so a core that wrongly takes it runs junk.
+//! - A *guard* tests a value site's accumulator against zero with `beq`/`bne`
+//!   (or `c.beqz`/`c.bnez`). Unlike the others, which only notice faults that
+//!   move a jump target or a comparison far enough, it notices any wrong value
+//!   among its `dep_i`.
+//! - A *jump* site ends a block with `jal rd` or `c.j` to the next block.
+//! - A *link* site points `rd` at the next block (`auipc; addi`), so a `ret`
+//!   lands there.
 //!
 //! Branch and jump sites only peek at workload registers; guards consume
 //! them, so every register the workload writes is checked by the next guard
@@ -98,9 +104,9 @@ impl PoolRef {
 pub enum Dest {
     /// An absolute value: 0 for a guard.
     Data(u64),
-    /// The instruction at this index of the same block (possibly one past the
-    /// end, i.e. the next block). Resolved to an address by [`Site::link`].
-    Code(usize),
+    /// The first instruction of the next block in execution order. Resolved
+    /// to an address by [`Site::link`].
+    Next,
 }
 
 #[derive(Debug, Clone)]
@@ -127,10 +133,21 @@ pub enum Kind {
         weights: Vec<(Opcode, f64)>,
         /// Chosen once Spike tells us the operands' values.
         opcode: Option<Opcode>,
+        /// Byte offset of the target: the next block when `taken` (set by
+        /// [`Site::link`]), a random decoy otherwise.
+        offset: i32,
+        /// `c.beqz`/`c.bnez rs1` (`rs2` is x0) instead of a base branch.
+        compressed: bool,
     },
-    /// `beq reg, x0` when `taken`, `bne reg, x0` otherwise; `reg` is 0 in a
-    /// correct execution.
-    Guard { reg: XReg, taken: bool },
+    /// `beq reg, x0` when `taken`, `bne reg, x0` otherwise (`c.beqz`/`c.bnez`
+    /// if `compressed`); `reg` is 0 in a correct execution.
+    Guard { reg: XReg, taken: bool, compressed: bool },
+    /// `jal rd, next`, or `c.j next` if `compressed`; `offset` is set by
+    /// [`Site::link`].
+    Jump { rd: XReg, compressed: bool, offset: i32 },
+    /// `auipc rd; addi rd`, pointing `rd` at the next block; `offset` is set
+    /// by [`Site::link`].
+    Link { rd: XReg, offset: i32 },
 }
 
 /// One entanglement site inside a basic block's instructions.
@@ -163,18 +180,40 @@ impl Site {
                 Some(self.at + Self::producer_len(xlen, golden_slot.is_some()))
             }
             Kind::Branch { .. } => Some(self.at),
-            Kind::Guard { .. } => None,
+            Kind::Guard { .. } | Kind::Jump { .. } | Kind::Link { .. } => None,
+        }
+    }
+
+    /// Whether the site leaves its block for the next one.
+    pub fn ends_block(&self) -> bool {
+        matches!(
+            self.kind,
+            Kind::Branch { taken: true, .. } | Kind::Jump { .. } | Kind::Value { dest: Dest::Next, .. }
+        )
+    }
+
+    /// How far a PC-relative jump to the next block reaches: its offset must
+    /// lie in `-reach..reach`. `None` if the site jumps anywhere or not at all.
+    pub fn reach(&self) -> Option<u64> {
+        match self.kind {
+            Kind::Branch { taken: true, compressed: true, .. } => Some(1 << 8),
+            Kind::Branch { taken: true, .. } => Some(1 << 12),
+            Kind::Jump { compressed: true, .. } => Some(1 << 11),
+            Kind::Jump { .. } => Some(1 << 20),
+            _ => None,
         }
     }
 
     /// Fix code addresses: `block_addr` is the absolute address of the
-    /// block's first instruction, `fail_addr` that of `_fail` and
-    /// `golden_addr` that of the `.golden` section, if any. A site reading
-    /// `.golden` gets its `auipc; ld` here, as its address never changes.
+    /// block's first instruction, `next_addr` that of the next block in
+    /// execution order, `fail_addr` that of `_fail` and `golden_addr` that of
+    /// the `.golden` section, if any. A site reading `.golden` gets its
+    /// `auipc; ld` here, as its address never changes.
     pub fn link(
         &mut self,
         instrs: &mut [Instruction],
         block_addr: u64,
+        next_addr: Option<u64>,
         fail_addr: Option<u64>,
         golden_addr: Option<u64>,
     ) -> Result<()> {
@@ -202,11 +241,19 @@ impl Site {
             let load = PoolRef { at: self.at, rd: rprod, slot, load: true };
             load.link(instrs, block_addr, golden_addr)?;
         }
-        if let Kind::Value { dest, value, .. } = &mut self.kind {
-            *value = Some(match *dest {
-                Dest::Data(value) => value,
-                Dest::Code(index) => addr_of(instrs, index),
-            });
+        let next = || next_addr.ok_or_else(|| anyhow!("site jumps to the next block, which is missing"));
+        let pc = addr_of(instrs, self.at);
+        match &mut self.kind {
+            Kind::Value { dest, value, .. } => {
+                *value = Some(match *dest {
+                    Dest::Data(value) => value,
+                    Dest::Next => next()?,
+                });
+            }
+            Kind::Branch { taken: true, offset, .. } | Kind::Jump { offset, .. } | Kind::Link { offset, .. } => {
+                *offset = i32::try_from(next()?.wrapping_sub(pc) as i64)?;
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -230,6 +277,7 @@ impl Site {
                 taken,
                 weights,
                 opcode,
+                ..
             } => {
                 let a = xregs[rs1.index() as usize];
                 let b = xregs[rs2.index() as usize];
@@ -246,7 +294,7 @@ impl Site {
                 };
                 *opcode = Some(chosen.0);
             }
-            Kind::Guard { .. } => {}
+            Kind::Guard { .. } | Kind::Jump { .. } | Kind::Link { .. } => {}
         }
         Ok(())
     }
@@ -279,7 +327,6 @@ impl Site {
     /// Write the site's instructions for what is currently known: the
     /// placeholder before [`Site::resolve`], the entangled form after.
     pub fn render(&self, instrs: &mut [Instruction], xlen: Xlen) -> Result<()> {
-        // Branches skip the next instruction when taken.
         match self.kind {
             Kind::Value {
                 rprod,
@@ -311,20 +358,38 @@ impl Site {
                 rs2,
                 taken,
                 opcode,
+                offset,
+                compressed,
                 ..
             } => {
-                instrs[self.at] = match opcode {
-                    Some(op) => branch(op, rs1, rs2, 8)?,
-                    None if taken => Instruction::Jal {
-                        rd: XReg::ZERO,
-                        imm: 8,
-                    },
-                    None => Instruction::nop(),
+                instrs[self.at] = match (opcode, compressed) {
+                    (Some(op), _) => branch(op, rs1, rs2, offset)?,
+                    (None, false) if taken => Instruction::Jal { rd: XReg::ZERO, imm: offset },
+                    (None, true) if taken => Instruction::CJ { imm: offset },
+                    (None, false) => Instruction::nop(),
+                    (None, true) => Instruction::cnop(),
                 };
             }
-            Kind::Guard { reg, taken } => {
-                let op = if taken { Opcode::Beq } else { Opcode::Bne };
-                instrs[self.at] = branch(op, reg, XReg::ZERO, 8)?;
+            // A guard skips the `jal` after it when taken.
+            Kind::Guard { reg, taken, compressed } => {
+                instrs[self.at] = match (taken, compressed) {
+                    (true, false) => branch(Opcode::Beq, reg, XReg::ZERO, 8)?,
+                    (false, false) => branch(Opcode::Bne, reg, XReg::ZERO, 8)?,
+                    (true, true) => Instruction::CBeqz { rs1: reg, imm: 6 },
+                    (false, true) => Instruction::CBnez { rs1: reg, imm: 6 },
+                };
+            }
+            Kind::Jump { rd, compressed, offset } => {
+                instrs[self.at] = if compressed {
+                    Instruction::CJ { imm: offset }
+                } else {
+                    Instruction::Jal { rd, imm: offset }
+                };
+            }
+            Kind::Link { rd, offset } => {
+                let (hi, lo) = split_imm32(offset as u32);
+                instrs[self.at] = Instruction::Auipc { rd, imm: hi };
+                instrs[self.at + 1] = Instruction::Addi { rd, rs1: rd, imm: lo };
             }
         }
         Ok(())
@@ -414,7 +479,8 @@ impl<'a> SiteBuilder<'a> {
     /// direction can be realized.
     pub fn can_generate(&self, opcode: Opcode) -> bool {
         match opcode {
-            Opcode::Jalr => self.enabled(Opcode::Jalr),
+            Opcode::Jalr | Opcode::CJr | Opcode::CJalr | Opcode::CJ => self.enabled(opcode),
+            Opcode::CBeqz | Opcode::CBnez => self.enabled(Opcode::CBeqz) && self.enabled(Opcode::CBnez),
             _ => {
                 BRANCH_PAIRS.iter().any(|(a, b)| opcode == *a || opcode == *b)
                     && self.enabled(opcode)
@@ -429,56 +495,103 @@ impl<'a> SiteBuilder<'a> {
             .any(|(a, b)| self.enabled(*a) && self.enabled(*b))
     }
 
-    /// A control-flow site for a drawn `opcode`: an indirect jump to the next
-    /// instruction for `jalr`, otherwise a conditional branch skipping the
-    /// next instruction. Both only skip a `jal _fail`, so they can sit
-    /// anywhere in a block. The concrete branch opcode is picked later from
-    /// `weights`.
+    /// A control-flow site for a drawn `opcode`: for `jalr`, `c.jr` and
+    /// `c.jalr`, an indirect jump to the next block, through `ra`/`t0` half of
+    /// the time so it pushes or pops the return-address stack; for `c.j`, a
+    /// jump to the next block; otherwise a conditional branch, which ends the
+    /// block if taken. The concrete branch opcode is picked later from
+    /// `weights`, among the base ones or `c.beqz`/`c.bnez`.
     pub fn control_flow(
         &mut self,
         instrs: &mut Vec<Instruction>,
         opcode: Opcode,
         weights: &InstrWeights,
         rng: &mut (impl Rng + ?Sized),
-    ) -> Vec<Site> {
+    ) -> Site {
         debug_assert!(self.can_generate(opcode), "{opcode} cannot be generated");
-        if opcode == Opcode::Jalr {
-            let rprod = self.stale(rng);
-            let rd = self.stale(rng);
+        if opcode == Opcode::CJ {
+            let at = instrs.len();
+            instrs.push(Instruction::cnop());
+            return Site { at, kind: Kind::Jump { rd: XReg::ZERO, compressed: true, offset: 0 }, fail_at: None };
+        }
+        if matches!(opcode, Opcode::Jalr | Opcode::CJr | Opcode::CJalr) {
+            let rprod = self.link_or_stale(rng);
+            let rd = match opcode {
+                Opcode::CJr => XReg::ZERO,
+                Opcode::CJalr => XReg::RA,
+                _ if rng.random_bool(1.0 / 3.0) => XReg::ZERO,
+                _ => self.link_or_stale(rng),
+            };
             let rdeps = self.peek(rng, MAX_PEEK, rprod);
             self.clobber(rprod);
             self.clobber(rd);
-            // producer; xor...; jalr rd, 0(rprod); jal x0, _fail; <dest>
-            let at = instrs.len();
-            let dest = at + Site::producer_len(self.target.xlen, self.golden_section) + rdeps.len() + 2;
-            let mut site = self.value_site(instrs, rprod, rdeps, Dest::Code(dest));
-            instrs.push(Instruction::Jalr { rd, rs1: rprod, imm: 0 });
+            // producer; xor...; jalr rd, 0(rprod); jal x0, _fail
+            let mut site = self.value_site(instrs, rprod, rdeps, Dest::Next);
+            instrs.push(match opcode {
+                Opcode::CJr => Instruction::CJr { rs1: rprod },
+                Opcode::CJalr => Instruction::CJalr { rs1: rprod },
+                _ => Instruction::Jalr { rd, rs1: rprod, imm: 0 },
+            });
             site.fail_at = Some(instrs.len());
             instrs.push(Instruction::nop());
-            return vec![site];
+            return site;
         }
-        let operands = self.peek(rng, 2, XReg::ZERO);
-        let rs1 = operands[0];
-        let rs2 = match operands.get(1) {
-            Some(reg) => *reg,
-            None => self.random_reg_except(rng, rs1),
+        // c.beqz/c.bnez compare one of x8..x15, the freshest if any, with zero.
+        let compressed = matches!(opcode, Opcode::CBeqz | Opcode::CBnez);
+        let (rs1, rs2, opcodes): (_, _, Vec<_>) = if compressed {
+            let rs1 = self.fresh.iter().rev().copied().find(|reg| (8..=15).contains(&reg.index()));
+            let rs1 = rs1.unwrap_or_else(|| XReg::new(rng.random_range(8..=15)).expect("valid register"));
+            (rs1, XReg::ZERO, vec![Opcode::CBeqz, Opcode::CBnez])
+        } else {
+            let operands = self.peek(rng, 2, XReg::ZERO);
+            let rs1 = operands[0];
+            let rs2 = match operands.get(1) {
+                Some(reg) => *reg,
+                None => self.random_reg_except(rng, rs1),
+            };
+            (rs1, rs2, enabled_branch_opcodes(self.target).collect())
         };
         let taken = rng.random_bool(0.5);
-        let weights = enabled_branch_opcodes(self.target)
-            .map(|op| (op, weights.get(op)))
-            .collect();
-        let kind = Kind::Branch { rs1, rs2, taken, weights, opcode: None };
-        vec![branch_site(instrs, kind, taken)]
+        let weights = opcodes.into_iter().map(|op| (op, weights.get(op))).collect();
+        // taken: b<cc> next; jal _fail. Not taken: b<cc> decoy.
+        let at = instrs.len();
+        instrs.push(if compressed { Instruction::cnop() } else { Instruction::nop() });
+        let fail_at = taken.then(|| {
+            instrs.push(Instruction::nop());
+            at + 1
+        });
+        let offset = if taken { 0 } else { self.decoy(rng, if compressed { 256 } else { 4096 }) };
+        Site {
+            at,
+            kind: Kind::Branch { rs1, rs2, taken, weights, opcode: None, offset, compressed },
+            fail_at,
+        }
+    }
+
+    /// A random branch offset within `reach` bytes other than the
+    /// fall-through, mostly landing in the random bytes between blocks.
+    fn decoy(&self, rng: &mut (impl Rng + ?Sized), reach: i32) -> i32 {
+        let align = self.target.instruction_alignment() as i32;
+        loop {
+            let offset = rng.random_range(-reach / align..reach / align) * align;
+            if !(0..=4).contains(&offset) {
+                return offset;
+            }
+        }
     }
 
     /// `acc = K ^ fresh_1 ^ ... ^ fresh_k`, which is 0 in a correct execution,
     /// then a branch to `_fail` unless it is. Consumes every fresh register.
     fn guard(&mut self, instrs: &mut Vec<Instruction>, rng: &mut (impl Rng + ?Sized)) -> Vec<Site> {
-        let acc = self.stale(rng);
+        // c.beqz/c.bnez only take x8..x15.
+        let compact: Vec<_> = self.stale_regs().into_iter().filter(|reg| (8..=15).contains(&reg.index())).collect();
+        let compressed =
+            !compact.is_empty() && use_compressed(self.target, &[Opcode::CBeqz, Opcode::CBnez], rng);
+        let acc = if compressed { compact[rng.random_range(0..compact.len())] } else { self.stale(rng) };
         let rdeps: Vec<_> = self.fresh.drain(..).filter(|reg| *reg != acc).collect();
         let value = self.value_site(instrs, acc, rdeps, Dest::Data(0));
         let taken = rng.random_bool(0.5);
-        let guard = branch_site(instrs, Kind::Guard { reg: acc, taken }, taken);
+        let guard = guard_site(instrs, acc, taken, compressed);
         vec![value, guard]
     }
 
@@ -527,14 +640,31 @@ impl<'a> SiteBuilder<'a> {
     /// value, for generator code to overwrite; any unreserved one if all are
     /// fresh.
     fn stale(&self, rng: &mut (impl Rng + ?Sized)) -> XReg {
-        let stale: Vec<_> = (1..32)
-            .map(|i| XReg::new(i).expect("valid register"))
-            .filter(|reg| !self.fresh.contains(reg) && !self.reserved.contains(reg))
-            .collect();
+        let stale = self.stale_regs();
         if stale.is_empty() {
             self.random_reg_except(rng, XReg::ZERO)
         } else {
             stale[rng.random_range(0..stale.len())]
+        }
+    }
+
+    fn stale_regs(&self) -> Vec<XReg> {
+        (1..32)
+            .map(|i| XReg::new(i).expect("valid register"))
+            .filter(|reg| !self.fresh.contains(reg) && !self.reserved.contains(reg))
+            .collect()
+    }
+
+    /// `ra` or `t0` half of the time when one is stale, else [`Self::stale`].
+    fn link_or_stale(&self, rng: &mut (impl Rng + ?Sized)) -> XReg {
+        let links: Vec<_> = [XReg::RA, XReg::T0]
+            .into_iter()
+            .filter(|reg| !self.fresh.contains(reg) && !self.reserved.contains(reg))
+            .collect();
+        if !links.is_empty() && rng.random_bool(0.5) {
+            links[rng.random_range(0..links.len())]
+        } else {
+            self.stale(rng)
         }
     }
 
@@ -557,12 +687,21 @@ impl<'a> SiteBuilder<'a> {
     }
 }
 
-/// Append a branch site, which skips the next instruction when taken:
-///   taken:     b<cc> +8; jal _fail
-///   not taken: b<cc> +8; jal +8; jal _fail
-fn branch_site(instrs: &mut Vec<Instruction>, kind: Kind, taken: bool) -> Site {
+/// Whether to use the compressed form, which needs all of `opcodes`: half of
+/// the time when they are enabled.
+pub fn use_compressed(target: &Target, opcodes: &[Opcode], rng: &mut (impl Rng + ?Sized)) -> bool {
+    opcodes
+        .iter()
+        .all(|op| target.supports(*op) && !target.disabled_opcodes.contains(op))
+        && rng.random_bool(0.5)
+}
+
+/// Append a guard, which skips the next instruction when taken:
+///   taken:     b<cc> skip; jal _fail
+///   not taken: b<cc> skip; jal +8; jal _fail
+fn guard_site(instrs: &mut Vec<Instruction>, reg: XReg, taken: bool, compressed: bool) -> Site {
     let at = instrs.len();
-    instrs.push(Instruction::nop());
+    instrs.push(if compressed { Instruction::cnop() } else { Instruction::nop() });
     if !taken {
         instrs.push(Instruction::Jal {
             rd: XReg::ZERO,
@@ -573,7 +712,7 @@ fn branch_site(instrs: &mut Vec<Instruction>, kind: Kind, taken: bool) -> Site {
     instrs.push(Instruction::nop());
     Site {
         at,
-        kind,
+        kind: Kind::Guard { reg, taken, compressed },
         fail_at: Some(fail_at),
     }
 }
@@ -615,6 +754,9 @@ fn branch_taken(opcode: Opcode, a: u64, b: u64, xlen: Xlen) -> bool {
         Opcode::Bge => sa >= sb,
         Opcode::Bltu => ua < ub,
         Opcode::Bgeu => ua >= ub,
+        // Their rs2 is x0, so `b` is 0.
+        Opcode::CBeqz => ua == ub,
+        Opcode::CBnez => ua != ub,
         _ => unreachable!("not a branch: {opcode}"),
     }
 }
@@ -628,6 +770,8 @@ fn branch(opcode: Opcode, rs1: XReg, rs2: XReg, imm: i32) -> Result<Instruction>
         Opcode::Bge => Bge { rs1, rs2, imm },
         Opcode::Bltu => Bltu { rs1, rs2, imm },
         Opcode::Bgeu => Bgeu { rs1, rs2, imm },
+        Opcode::CBeqz => CBeqz { rs1, imm },
+        Opcode::CBnez => CBnez { rs1, imm },
         _ => return Err(anyhow!("not a branch: {opcode}")),
     })
 }
@@ -687,6 +831,8 @@ mod tests {
                 taken,
                 weights: weights.to_vec(),
                 opcode: None,
+                offset: 8,
+                compressed: false,
             },
             fail_at: None,
         };
@@ -743,7 +889,7 @@ mod tests {
             },
             fail_at: None,
         };
-        site.link(&mut instrs, block, Some(block + 0x100), Some(golden_addr)).unwrap();
+        site.link(&mut instrs, block, None, Some(block + 0x100), Some(golden_addr)).unwrap();
         site.render(&mut instrs, Xlen::X64).unwrap();
         let (Instruction::Auipc { rd, imm: hi }, Instruction::Ld { rd: ld_rd, rs1, imm: lo }) =
             (instrs[4], instrs[5])

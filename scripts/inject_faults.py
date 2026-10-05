@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fault-injection check for self-checking programs.
 
-For each ELF, flip one random workload ALU instruction in `_stimulus` so it
+For each ELF, flip one random executed workload ALU instruction so it
 computes a wrong value (add <-> sub, or the low bit of an OP-IMM immediate),
 run the mutant on Spike, and classify how the program ends:
 
@@ -47,27 +47,35 @@ def text_section(elf):
     return vma, offset, data[offset : offset + size]
 
 
-def instructions(vma, text, start, end):
-    """Yield (addr, word) for each instruction in [start, end), C-aware."""
-    pc = start
-    while pc < end:
-        lo = int.from_bytes(text[pc - vma : pc - vma + 2], "little")
-        if lo & 3 == 3:
-            yield pc, int.from_bytes(text[pc - vma : pc - vma + 4], "little")
-            pc += 4
-        else:
-            pc += 2
+def executed(spike, isa, elf, start, stop):
+    """PCs Spike commits from `start` until `stop`, in order. The workload's
+    blocks are scattered, so its instructions are found by running it."""
+    log = subprocess.run(
+        [spike, f"--isa={isa}", "-l", "--log-commits", elf],
+        capture_output=True, text=True, timeout=60,
+    ).stderr
+    pcs = []
+    for line in log.splitlines():
+        m = re.match(r"core\s+0: \d 0x([0-9a-f]+) ", line)
+        if not m:
+            continue
+        pc = int(m.group(1), 16) & 0xFFFFFFFF
+        if pc == stop:
+            break
+        if pcs or pc == start:
+            pcs.append(pc)
+    return pcs
 
 
 def is_constant_chain(prev, word):
-    """Whether `word` continues a generator constant load (lui/slli; addi rd, rd)
-    rather than being a workload instruction."""
+    """Whether `word` continues a generator constant load (lui/slli/auipc;
+    addi rd, rd) rather than being a workload instruction."""
     if prev is None:
         return False
     rd, rs1 = (word >> 7) & 31, (word >> 15) & 31
     prev_opcode, prev_rd = prev & 0x7F, (prev >> 7) & 31
     prev_funct3 = (prev >> 12) & 7
-    feeds = prev_opcode == 0x37 or (prev_opcode == 0x13 and prev_funct3 == 1) or prev_opcode == 0x1B
+    feeds = prev_opcode in (0x37, 0x17, 0x1B) or (prev_opcode == 0x13 and prev_funct3 == 1)
     return feeds and prev_rd == rd and rs1 == rd
 
 
@@ -125,7 +133,12 @@ def main():
         vma, offset, text = text_section(elf)
         candidates = []
         prev = None
-        for pc, word in instructions(vma, text, syms["_stimulus"], syms["_check"]):
+        for pc in executed(args.spike, args.isa, str(elf), syms["_stimulus"], syms["_check"]):
+            lo = int.from_bytes(text[pc - vma : pc - vma + 2], "little")
+            if lo & 3 != 3:
+                prev = None
+                continue
+            word = int.from_bytes(text[pc - vma : pc - vma + 4], "little")
             if (m := mutate(word, prev)) is not None:
                 candidates.append((pc, word, m))
             prev = word

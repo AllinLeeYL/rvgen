@@ -159,8 +159,9 @@ impl Target {
 
     /// Validate both ISA availability and operands before emitting any code.
     pub fn emit(&self, instruction: Instruction, bytes: &mut Vec<u8>) -> Result<()> {
+        // Raw encodings fill the code area's gaps with junk.
         ensure!(
-            self.supports(instruction.opcode()),
+            self.supports(instruction.opcode()) || instruction.opcode().extension() == Extension::Raw,
             "{} is not enabled for this target",
             instruction.opcode()
         );

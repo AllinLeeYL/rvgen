@@ -1,4 +1,4 @@
-use crate::entangle::{PoolRef, Site, SiteBuilder, written_xreg};
+use crate::entangle::{Kind, PoolRef, Site, SiteBuilder, written_xreg};
 use crate::hart::HartState;
 use crate::orchestrator::GlobalState;
 use crate::riscv::asmutil::{csr_rd_and_addr, with_csr};
@@ -9,7 +9,7 @@ use crate::weights::{InstrWeights, is_control_flow, unweightable_reason};
 use anyhow::{Result, ensure};
 use rand::{Rng, RngExt};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct BasicBlock {
     pub id: usize,
     pub is_smc: bool,
@@ -21,6 +21,11 @@ pub struct BasicBlock {
     pub sites: Vec<Site>,
     /// References to `.golden` within `instrs` outside of sites.
     pub pool_refs: Vec<PoolRef>,
+    /// Address of the first instruction, set by `Hart::place`.
+    pub addr: u64,
+    /// Index of the block this one is placed right after, e.g. the caller a
+    /// `ret` returns into; `None` places it anywhere.
+    pub after: Option<usize>,
 }
 
 impl BasicBlock {
@@ -33,12 +38,45 @@ impl BasicBlock {
             label: None,
             sites: Vec::new(),
             pool_refs: Vec::new(),
+            addr: 0,
+            after: None,
         }
+    }
+
+    /// End the block with a jump to the next one: `jal rd, next`, or `c.j next`
+    /// if `compressed`.
+    pub fn jump(&mut self, rd: XReg, compressed: bool) {
+        self.sites.push(Site {
+            at: self.instrs.len(),
+            kind: Kind::Jump { rd, compressed, offset: 0 },
+            fail_at: None,
+        });
+        self.instrs.push(if compressed { Instruction::cnop() } else { Instruction::nop() });
+    }
+
+    /// End a callee's block with a return to the next block, which is placed
+    /// right after the caller: `ra` is first pointed back at it, as nested
+    /// calls and site code may have overwritten it, then `ret`, or `c.jr ra`
+    /// if `compressed`.
+    pub fn ret(&mut self, compressed: bool) {
+        self.sites.push(Site {
+            at: self.instrs.len(),
+            kind: Kind::Link { rd: XReg::RA, offset: 0 },
+            fail_at: None,
+        });
+        self.instrs.extend([Instruction::nop(), Instruction::nop()]);
+        self.instrs.push(if compressed {
+            Instruction::CJr { rs1: XReg::RA }
+        } else {
+            Instruction::Jalr { rd: XReg::ZERO, rs1: XReg::RA, imm: 0 }
+        });
     }
 
     /// Generate the block's workload, drawing opcodes from `weights`. With `sites`, memory base addresses are
     /// derived from workload registers and the block ends with entanglement
     /// sites checking the registers it wrote (see [`crate::entangle`]).
+    /// Returns the unused budget if a control-flow site ended the block, which
+    /// then needs no other way out.
     pub fn run(
         &mut self,
         rng: &mut (impl Rng + ?Sized),
@@ -47,7 +85,7 @@ impl BasicBlock {
         hart_state: &mut HartState,
         weights: &InstrWeights,
         mut sites: Option<&mut SiteBuilder>,
-    ) -> Result<()> {
+    ) -> Result<Option<usize>> {
         // Branches and jalr are drawn like any opcode, but only exist as
         // entanglement sites.
         let candidates: Vec<_> = target
@@ -68,14 +106,19 @@ impl BasicBlock {
         let xlen = target.xlen;
         let csrs = target.workload_csrs();
 
-        for _ in 0..self.budget {
+        for drawn in 0..self.budget {
             let opcode = sampler.as_ref().expect("built for a nonzero budget").sample(rng);
             if is_control_flow(opcode) {
                 let builder = sites
                     .as_deref_mut()
                     .expect("control flow is only drawn when entangling");
                 let site = builder.control_flow(&mut self.instrs, opcode, weights, rng);
-                self.sites.extend(site);
+                let ends = site.ends_block();
+                self.sites.push(site);
+                if ends {
+                    // Unchecked registers carry over to the next block's guards.
+                    return Ok(Some(self.budget - drawn - 1));
+                }
                 continue;
             }
             let mut instr = opcode.random(rng, xlen)?;
@@ -125,7 +168,7 @@ impl BasicBlock {
             let end = builder.block_end(&mut self.instrs, rng);
             self.sites.extend(end);
         }
-        Ok(())
+        Ok(None)
     }
 
     /// Rewrite every site's instructions for what is currently known.
