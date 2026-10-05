@@ -1,5 +1,11 @@
 use rand::{Rng, RngExt};
 
+/// A random size in `lo..=hi`, log-uniformly distributed.
+pub fn log_uniform(lo: u64, hi: u64, rng: &mut (impl Rng + ?Sized)) -> u64 {
+    let ratio = (hi as f64 / lo as f64).powf(rng.random::<f64>());
+    ((lo as f64 * ratio) as u64).clamp(lo, hi)
+}
+
 pub fn cut_cake_randomly(
     total: usize,
     smallest_cake: Option<usize>,

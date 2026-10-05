@@ -12,6 +12,7 @@ use crate::options::{CommonOpts, ManyOpts, OneOpts};
 use crate::riscv::Xlen;
 use crate::spike::Spike;
 use crate::target::Target;
+use crate::utils::log_uniform;
 use crate::weights::InstrWeights;
 
 /// Data section holding the constants the code loads: the entanglement sites'
@@ -22,6 +23,14 @@ const GOLDEN_SECTION: &str = ".golden";
 /// Cascade. Every block is within `jal` reach (1 MiB) of `_fail`.
 const MIN_CODE_AREA: u64 = 16 << 10;
 const MAX_CODE_AREA: u64 = 1 << 20;
+
+/// Bounds of the data section's size when `--scratch-size` is not given,
+/// drawn the same way: from fitting in the L1 data cache to far exceeding it.
+const MIN_SCRATCH: u64 = 4 << 10;
+const MAX_SCRATCH: u64 = 1 << 20;
+
+/// The data section the workload's memory accesses target.
+const SCRATCH_SECTION: &str = "scratch";
 
 #[derive(Default)]
 pub struct GlobalState {
@@ -40,6 +49,8 @@ pub struct Orchestrator {
     golden_section: bool,
     /// The instruction mix of every basic block.
     weights: InstrWeights,
+    /// Random initial contents of the data section, so loads see data.
+    scratch: Vec<u8>,
 }
 
 impl Orchestrator {
@@ -70,7 +81,18 @@ impl Orchestrator {
                 section.private = true;
             }
         }
-        let _ = state.memory.reserve(&target.physical_memory, "scratch", target.scratch_size, 4, Permissions::RW);
+        let ram = &target.physical_memory;
+        let scratch_size = target
+            .scratch_size
+            .unwrap_or_else(|| log_uniform(MIN_SCRATCH, MAX_SCRATCH.min(ram.size / 4).max(MIN_SCRATCH), &mut rng) / 8 * 8);
+        let scratch = match state.memory.reserve(ram, SCRATCH_SECTION, scratch_size, 8, Permissions::RW) {
+            Ok(section) => {
+                let mut bytes = vec![0; section.region.size as usize];
+                rng.fill(&mut bytes[..]);
+                bytes
+            }
+            Err(_) => Vec::new(),
+        };
         let _ = state.memory.reserve(&target.physical_memory, "smc", target.smc_size, 4, Permissions::RWX);
 
         Self {
@@ -82,6 +104,7 @@ impl Orchestrator {
             entangle,
             golden_section,
             weights,
+            scratch,
         }
     }
 
@@ -121,8 +144,7 @@ impl Orchestrator {
                 min <= MAX_CODE_AREA,
                 "{code} bytes of code need more than the {MAX_CODE_AREA}-byte code area; lower --num-instrs"
             );
-            let ratio = (MAX_CODE_AREA as f64 / min as f64).powf(self.rng.random::<f64>());
-            let size = (min as f64 * ratio) as u64 / 4 * 4;
+            let size = log_uniform(min, MAX_CODE_AREA, &mut self.rng) / 4 * 4;
             let start = self.target.physical_memory.start;
             let region = MemoryRegion { start, size, permissions: Permissions::RX };
             self.state.memory.add(Section {
@@ -146,6 +168,9 @@ impl Orchestrator {
         };
         let mut elf = Elf::new(&self.target, &self.state.memory)?;
         elf.add_code(&hart.image())?;
+        if !self.scratch.is_empty() {
+            elf.fill(SCRATCH_SECTION, &self.scratch)?;
+        }
         if self.state.memory.get(GOLDEN_SECTION).is_ok() {
             let golden = hart.golden_bytes();
             let section = elf.fill(GOLDEN_SECTION, &golden)?;
@@ -226,6 +251,7 @@ pub fn generate(opts: &CommonOpts) -> Result<Vec<u8>> {
         ram,
         opts.scratch_size,
         opts.smc_size,
+        opts.pmp_regions,
     )?;
     let self_check = !opts.no_self_check;
     let entangle = (self_check && !opts.no_entangle).then_some(opts.guard_threshold);

@@ -38,7 +38,11 @@ Configure a batch of programs:
 - `--isa`: comma-separated extensions (default: `i,zicsr`); Zicsr is required for the trap handler, and D implies F.
 - `--priv`: comma-separated privilege modes `m`, `s`, `u` (default: `m,s,u`); M is required and S requires U. Without S, no S-mode CSR such as `sscratch` is accessed.
 - `--ram-base`, `--ram-size`: allocation bounds (default: `0x80000000`, `0x08000000`).
-- `--scratch-size`, `--smc-size`: section sizes in bytes (default: `8192` each); zero SMC size omits it.
+- `--scratch-size`: data section size in bytes (default: drawn per program,
+  log-uniformly between 4 KiB and 1 MiB, see [Memory accesses](#memory-accesses)).
+- `--smc-size`: SMC section size in bytes (default: `8192`); zero omits it.
+- `--pmp-regions`: PMP entries the target implements, at most 16 (default:
+  `8`); `_init` configures them (see [CSRs](#csrs)). `0` leaves PMP untouched.
 - `-o`, `--output`: output file for `one` (default: `rvprog.elf`) or
   output directory for `many` (default: `rvprogs`).
 - `--spike`: Spike executable used for the self-check (default: `spike`).
@@ -174,7 +178,7 @@ target:
 | Symbol | Contents |
 |---|---|
 | `_start` | entry point; points `mtvec` at `_trap_handler` |
-| `_init` | randomizes CSRs, FP registers, then x1-x31, the memory base registers getting their addresses |
+| `_init` | enables the FPU, randomizes CSRs (see [CSRs](#csrs)), FP registers, then x1-x31, the memory base registers getting their addresses |
 | `_stimulus` | the random workload's first block (the others are unlabeled, see [Control flow](#control-flow)) |
 | `_check` | the self-check (omitted with `--no-self-check`) |
 | `_exit` | reports the verdict to `tohost` and spins |
@@ -185,7 +189,42 @@ The `.golden` data section, exported as the `_golden` object symbol, holds the
 constants the code loads (RV64 only): the entanglement sites' golden values,
 then `_init`'s values and `_check`'s expected values.
 
+## CSRs
+
+The hart runs the whole program in M-mode, and no CSR access changes what an
+M-mode instruction does (`src/csrs.rs`). Generated code never writes
+`mstatus` (beyond `_init` setting `FS`), `mtvec`, `misa`, `satp`, the
+interrupt enables and pendings, or the debug triggers, and never locks a PMP
+entry, which would also bind M-mode. A CSR is only touched when the target
+has what it belongs to: `sscratch`, `stvec`, `sepc`, `scause`, `stval`,
+`scounteren`, `medeleg` and `mideleg` need S; `mcounteren` needs U; `fflags`,
+`frm` and `fcsr` need F.
+
+`_init` writes, with random values:
+
+| CSRs | Value |
+|---|---|
+| `mscratch`, `sscratch` | any |
+| `fcsr` | `frm` in 0–4 (RNE…RMM), random `fflags` |
+| `mcountinhibit`, `mcycle`, `minstret`, `mepc`, `mcause`, `mtval` | any |
+| a random subset of `mhpmevent3`–`31` with their `mhpmcounter` | event set 0–3 in the low byte, random mask above; any |
+| `mcounteren` (U), `medeleg`, `mideleg`, `stvec`, `sepc`, `scause`, `stval`, `scounteren` (S) | any |
+| `pmpaddr`/`pmpcfg` of each `--pmp-regions` entry | entry 0 NAPOT over all memory with RWX, so S and U could run; the others random, never locked, never write-without-read |
+
+The workload's CSR instructions draw from the same CSRs, except the PMP
+configurations. Reads are compared against Spike only for the CSRs that read
+back as written on any correct core: `mscratch`, `sscratch`, `fflags`, `frm`
+and `fcsr`. Any other read is followed by an instruction overwriting its
+destination, as a WARL field or a counter may read differently on the device.
+Writes to `frm` and `fcsr` are rewritten so the rounding mode stays legal:
+register writes become `csrrc`, `csrrwi frm` takes 0–4, and `csrrsi frm`
+becomes `csrrci`.
+
 ## Memory accesses
+
+The data section, `scratch`, is 4 KiB to 1 MiB, drawn log-uniformly per
+program unless `--scratch-size` fixes it, and starts out holding random bytes,
+which the ELF carries, so loads see data the workload never stored.
 
 Each program reserves 3–5 registers, drawn from `gp`, `tp` and `s2`–`s11`, as
 memory bases (`src/membase.rs`). `_init` points each one at a random
@@ -313,6 +352,7 @@ Use `./target/release/rvgen --help`, `one --help`, or `many --help` to inspect t
 - `src/weights.rs`: instruction weights, their validation, and per-block policy.
 - `src/orchestrator.rs`: per-core workload planning and basic-block allocation.
 - `src/target.rs`: fixed ISA configuration and instruction selection policy.
+- `src/csrs.rs`: which CSRs `_init` and the workload access, and how.
 - `src/memory.rs`: allocated sections and memory access bounds.
 - `src/elf.rs`: ELF serialization from basic blocks, memory layout, and target.
 - `src/hart.rs`: per-hart init, self-check, exit, fail, and trap-handler code.
@@ -321,7 +361,7 @@ Use `./target/release/rvgen --help`, `one --help`, or `many --help` to inspect t
 - `src/spike.rs`: Spike runs that compute and verify the self-check's and
   sites' values.
 - `src/riscv/`: instruction representation and encoding.
-- `src/utils.rs`: random budget partitioning.
+- `src/utils.rs`: random budget partitioning and log-uniform sizes.
 
 `Orchestrator` owns the fixed target, per-core basic blocks, shared mutable state,
 and RNG. The CLI reserves 8-byte `.tohost` and `.fromhost` sections aligned to
@@ -330,7 +370,7 @@ below them once generation knows how many constants the code loads, and
 reserves core 0's code area at the RAM base. `Elf::new(&target).encode(bbs,
 &memory)` preserves the supplied instruction order, section addresses, sizes,
 alignment, and permissions. Other supplied sections are zero-filled until
-filled with `Elf::fill` (as `.golden` is). The ELF
+filled with `Elf::fill`, as `.golden` is, and `scratch` with random bytes. The ELF
 encoder exports `tohost` and `fromhost` symbols for their supplied sections.
 
 Startup, register initialization (including the memory base registers), trap

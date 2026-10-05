@@ -175,7 +175,7 @@ impl Operand for FReg {
 }
 /// CSRs that are safe to access whatever extensions and privilege modes are
 /// enabled (M-mode is always present). The workload generator widens this per
-/// target (see `Target::workload_csrs`), e.g. with sscratch when S is enabled.
+/// target (see `crate::csrs::workload_csrs`), e.g. with sscratch when S is enabled.
 pub const SAFE_CSRS: &[Csr] = &[Csr::MSCRATCH];
 impl Operand for Csr {
     fn bits(self) -> u32 {

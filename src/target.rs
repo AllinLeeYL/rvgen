@@ -18,8 +18,11 @@ pub struct Target {
     pub num_cores: usize,
     pub num_instrs: usize,
     pub physical_memory: MemoryRegion,
-    pub scratch_size: u64,
+    /// Data section size; `None` draws one per program.
+    pub scratch_size: Option<u64>,
     pub smc_size: u64,
+    /// PMP entries the target implements (pmpaddr0 on).
+    pub pmp_regions: usize,
 }
 
 impl Target {
@@ -32,8 +35,9 @@ impl Target {
         num_cores: usize,
         num_instrs: usize,
         physical_memory: MemoryRegion,
-        scratch_size: u64,
+        scratch_size: Option<u64>,
         smc_size: u64,
+        pmp_regions: usize,
     ) -> Result<Self> {
         let mut extensions: HashSet<_> = extensions.into_iter().collect();
         ensure!(
@@ -61,6 +65,7 @@ impl Target {
                 || privileges.contains(&PrivilegeLevel::User),
             "S-mode requires U-mode"
         );
+        crate::csrs::validate_pmp_regions(pmp_regions)?;
         Ok(Self {
             xlen,
             extensions,
@@ -70,7 +75,8 @@ impl Target {
             num_instrs,
             physical_memory,
             scratch_size,
-            smc_size
+            smc_size,
+            pmp_regions,
         })
     }
 
@@ -99,16 +105,6 @@ impl Target {
         let mut csrs = SAFE_CSRS.to_vec();
         if self.has_privilege(PrivilegeLevel::Supervisor) {
             csrs.push(Csr::SSCRATCH);
-        }
-        csrs
-    }
-
-    /// CSRs the workload may access: the scratch CSRs plus those whose
-    /// extension is enabled, so no CSR access traps as illegal.
-    pub fn workload_csrs(&self) -> Vec<Csr> {
-        let mut csrs = self.scratch_csrs();
-        if self.has(Extension::F) {
-            csrs.push(Csr::FFLAGS);
         }
         csrs
     }

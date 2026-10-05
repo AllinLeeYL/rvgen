@@ -15,6 +15,7 @@
 //! let elf: Vec<u8> = generate(&opts).unwrap();
 //! ```
 mod basicblock;
+pub mod csrs;
 mod elf;
 mod entangle;
 mod hart;

@@ -191,6 +191,7 @@ mod tests {
                 size: 0x0800_0000,
                 permissions: Permissions::default(),
             },
+            Some(0),
             0,
             0,
         )

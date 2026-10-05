@@ -1,7 +1,8 @@
+use crate::csrs::{CsrSampler, Read};
 use crate::entangle::{Kind, PoolRef, Site, SiteBuilder, written_xreg};
 use crate::hart::HartState;
 use crate::orchestrator::GlobalState;
-use crate::riscv::asmutil::{csr_rd_and_addr, with_csr};
+use crate::riscv::asmutil::csr_rd_and_addr;
 use crate::riscv::asmutil::load_imm32;
 use crate::riscv::{Instruction, XReg, Xlen};
 use crate::target::Target;
@@ -104,7 +105,7 @@ impl BasicBlock {
             .then(|| weights.sampler(&candidates))
             .transpose()?;
         let xlen = target.xlen;
-        let csrs = target.workload_csrs();
+        let csrs = CsrSampler::new(target)?;
 
         for drawn in 0..self.budget {
             let opcode = sampler.as_ref().expect("built for a nonzero budget").sample(rng);
@@ -122,8 +123,11 @@ impl BasicBlock {
                 continue;
             }
             let mut instr = opcode.random(rng, xlen)?;
+            let mut csr_read = None;
             if csr_rd_and_addr(&instr).is_some() {
-                instr = with_csr(instr, csrs[rng.random_range(0..csrs.len())]);
+                let csr = csrs.sample(rng);
+                instr = csr.access(instr);
+                csr_read = Some(csr.read);
             }
             // If current instr is mem op, point it into a data section
             // through one of the program's base registers.
@@ -148,10 +152,11 @@ impl BasicBlock {
                 builder.observe(&instr);
             }
 
-            // If current instr reads an implementation-dependent CSR into rd,
-            // overwrite rd with a random value so the test stays deterministic.
-            if let Some((rd, csr)) = csr_rd_and_addr(&instr) {
-                if rd != XReg::ZERO && csr.is_implementation_dependent() {
+            // If current instr reads a CSR whose value may differ from Spike's
+            // into rd, overwrite rd with a random value so the test stays
+            // deterministic.
+            if let Some((rd, _)) = csr_rd_and_addr(&instr) {
+                if rd != XReg::ZERO && csr_read == Some(Read::Clobbered) {
                     let fixup = load_imm32(rd, rng.random::<i32>(), xlen);
                     self.instrs.extend_from_slice(&fixup);
                     if let Some(builder) = sites.as_deref_mut() {

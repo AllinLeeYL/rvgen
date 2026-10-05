@@ -202,8 +202,10 @@ impl Hart {
         }
         self.site_slots = sites.as_ref().map_or(0, SiteBuilder::golden_slots);
 
-        self.init_values = init_values(rng, target, &self.state.mem_bases);
-        let mut init = init_block(&self.init_values, target, self.init_slot())?;
+        let init_csrs = crate::csrs::init_csrs(target, rng);
+        self.init_values = init_values(rng, target, &init_csrs, &self.state.mem_bases);
+        let csrs: Vec<_> = init_csrs.iter().map(|(csr, _)| *csr).collect();
+        let mut init = init_block(&self.init_values, &csrs, target, self.init_slot())?;
         init.label = Some(INIT_LABEL.into());
         init.after = Some(0);
         init.jump(XReg::ZERO, false);
@@ -496,13 +498,18 @@ impl Hart {
     }
 }
 
-/// Values `_init` writes: the scratch CSRs, then f0-f31 (with F), then
-/// x1-x31. The memory bases hold their addresses, the rest random values.
-fn init_values(rng: &mut (impl Rng + ?Sized), target: &Target, bases: &MemBases) -> Vec<u64> {
+/// Values `_init` writes: the CSRs' values from [`crate::csrs::init_csrs`],
+/// then f0-f31 (with F), then x1-x31. The memory bases hold their addresses,
+/// the registers random values.
+fn init_values(
+    rng: &mut (impl Rng + ?Sized),
+    target: &Target,
+    csrs: &[(Csr, u64)],
+    bases: &MemBases,
+) -> Vec<u64> {
     let fregs = if target.has(Extension::F) { 32 } else { 0 };
-    let mut values: Vec<_> = (0..target.scratch_csrs().len() + fregs + 31)
-        .map(|_| random_xlen(rng, target.xlen) as u64)
-        .collect();
+    let mut values: Vec<_> = csrs.iter().map(|(_, value)| *value).collect();
+    values.extend((0..fregs + 31).map(|_| random_xlen(rng, target.xlen) as u64));
     let x1 = values.len() - 31;
     for base in &bases.bases {
         values[x1 + base.reg.index() as usize - 1] = base.addr;
@@ -510,12 +517,12 @@ fn init_values(rng: &mut (impl Rng + ?Sized), target: &Target, bases: &MemBases)
     values
 }
 
-/// `_init`: write [`init_values`] to the CSRs, FP registers and x1-x31 in
-/// that order, the CSRs and FP registers through x5 when inline, so no scratch
-/// value leaks into the workload. With `pool`, the values are loaded from
-/// `.golden` slots from `pool` on through x31, which is loaded last. x0 is
-/// hardwired to zero.
-fn init_block(values: &[u64], target: &Target, pool: Option<usize>) -> Result<BasicBlock> {
+/// `_init`: enable the FPU (with F), then write [`init_values`] to `csrs`,
+/// the FP registers and x1-x31 in that order, the CSRs and FP registers
+/// through x5, so no scratch value leaks into the workload. With `pool`, the
+/// values are loaded from `.golden` slots from `pool` on through x31, which is
+/// loaded last. x0 is hardwired to zero.
+fn init_block(values: &[u64], csrs: &[Csr], target: &Target, pool: Option<usize>) -> Result<BasicBlock> {
     use Instruction::*;
     const PTR: XReg = XReg::X31;
     let xlen = target.xlen;
@@ -532,21 +539,21 @@ fn init_block(values: &[u64], target: &Target, pool: Option<usize>) -> Result<Ba
         None => load_imm(rd, values[k] as i64, xlen),
     };
     let mut ks = 0..values.len();
-    // Scratch CSRs are plain XLEN-wide read/write registers, so any value is legal.
-    for csr in target.scratch_csrs() {
-        block.instrs.extend(load(XReg::X5, ks.next().expect("a CSR value")));
-        block.instrs.push(Csrrw { rd: XReg::ZERO, rs1: XReg::X5, csr });
-    }
     if target.has(Extension::F) {
-        // Enable the FPU: set both mstatus.FS bits (Dirty) with CSRRS so the
-        // other mstatus fields are preserved.
+        // Enable the FPU first, as fcsr is among the CSRs: set both mstatus.FS
+        // bits (Dirty) with CSRRS so the other mstatus fields are preserved.
         block.instrs.push(Lui {
             rd: XReg::X5,
             imm: 0x6, // 0x6000 = 0b11 << 13 (mstatus.FS)
         });
         block.instrs.push(Csrrs { rd: XReg::ZERO, rs1: XReg::X5, csr: Csr::MSTATUS });
-        // frm = RNE (round to nearest, ties to even), fflags = 0.
-        block.instrs.push(Csrrw { rd: XReg::ZERO, rs1: XReg::ZERO, csr: Csr::FCSR });
+    }
+    // Each value is legal for its CSR (see crate::csrs::init_csrs).
+    for &csr in csrs {
+        block.instrs.extend(load(XReg::X5, ks.next().expect("a CSR value")));
+        block.instrs.push(Csrrw { rd: XReg::ZERO, rs1: XReg::X5, csr });
+    }
+    if target.has(Extension::F) {
         // A 64-bit pattern with D (FLD or FMV.D.X, which only exists on RV64D);
         // otherwise a random (NaN-boxed) single from the low 32 bits.
         let wide = target.has(Extension::D);

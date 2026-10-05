@@ -34,13 +34,19 @@ pub struct CommonOpts {
     #[arg(long, default_value = "0x08000000", value_parser = parse_address)]
     pub ram_size: u64,
 
-    // Writable memory reserved for generated loads, stores, and atomics.
-    #[arg(long, default_value = "8192")]
-    pub scratch_size: u64,
+    // Writable memory reserved for generated loads, stores, and atomics, in
+    // bytes; drawn per program between 4 KiB and 1 MiB when omitted.
+    #[arg(long, value_parser = parse_address)]
+    pub scratch_size: Option<u64>,
 
     // Writable/executable SMC section size in bytes; zero omits the section.
     #[arg(long, default_value = "8192")]
     pub smc_size: u64,
+
+    // PMP entries the target implements (at most 16); `_init` configures
+    // them, never locked. 0 leaves PMP untouched.
+    #[arg(long, default_value = "8")]
+    pub pmp_regions: usize,
 
     // Disable specific instructions
     #[arg(long, default_value = "wfi,lr.w,lr.d", value_delimiter = ',')]
