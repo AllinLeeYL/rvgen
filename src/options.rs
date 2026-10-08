@@ -6,6 +6,12 @@ use std::str::FromStr;
 
 #[derive(Args, Clone)]
 pub struct CommonOpts {
+    /// TOML file of options keyed by their long flag names, e.g.
+    /// `isa = ["i", "m", "zicsr"]`, `num_instrs = 4096`, `misaligned_traps = true`.
+    /// Flags given on the command line win.
+    #[arg(long, value_name = "FILE")]
+    pub config: Option<std::path::PathBuf>,
+
     // Total number of instructions for each core
     #[arg(long, default_value = "1000")]
     pub num_instrs: usize,

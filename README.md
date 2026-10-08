@@ -35,6 +35,7 @@ Configure a batch of programs:
 - `--num-cores`: cores per program (default: `1`).
 - `--num-elfs`: programs in a batch, for `many` only (default: `100`).
 - `--xlen`: target register width, `32` or `64` (default: `64`).
+- `--config FILE`: TOML of options keyed by long flag names (`_` or `-`), e.g. `isa = ["i", "m", "zicsr"]`, `num_instrs = 4096`, `misaligned_traps = true`; arrays are comma-joined and command-line flags win.
 - `--isa`: comma-separated extensions (default: `i,zicsr`); Zicsr is required for the trap handler, and D implies F.
 - `--priv`: comma-separated privilege modes `m`, `s`, `u` (default: `m,s,u`); M is required and S requires U. Without S, no S-mode CSR such as `sscratch` is accessed.
 - `--ram-base`, `--ram-size`: allocation bounds (default: `0x80000000`, `0x08000000`).

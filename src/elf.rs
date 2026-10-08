@@ -46,7 +46,10 @@ pub struct HostInterface;
 
 impl HostInterface {
     pub const SIZE: u64 = 8;
-    pub const ALIGNMENT: u64 = 64;
+    /// Each mailbox gets a 4 KiB page of its own, so a target can map it
+    /// uncached (the host polls memory directly) without uncaching other data;
+    /// C910, for one, faults AMOs to uncached memory.
+    pub const ALIGNMENT: u64 = 4096;
 }
 
 impl ElfExtension for HostInterface {
@@ -829,7 +832,7 @@ mod tests {
             // .text is placed at the RAM base, the mailboxes after it.
             assert_eq!(elf.entry, 0x8000_0000);
             assert_eq!(elf.section(".text").2, 0x8000_0000);
-            for (index, (name, address)) in [("tohost", 0x8000_0040), ("fromhost", 0x8000_0080)]
+            for (index, (name, address)) in [("tohost", 0x8000_1000), ("fromhost", 0x8000_2000)]
                 .into_iter()
                 .enumerate()
             {
