@@ -55,12 +55,11 @@ pub struct HartState {
 /// inline, `_init`'s values and `_check`'s expected values.
 #[derive(Default)]
 pub struct Hart {
-    pub bbs: Vec<BasicBlock>,
-    state: HartState,
-    /// Golden values the entanglement sites load from `.golden`.
-    site_slots: usize,
+    // Constants & Targets
     /// Whether `_init` and `_check` load their constants from `.golden`.
     pooled: bool,
+    /// Golden values the entanglement sites load from `.golden`.
+    site_slots: usize,
     /// Values `_init` writes, see [`init_values`].
     init_values: Vec<u64>,
     /// Constants `_check` compares against, see [`check_values`].
@@ -68,6 +67,10 @@ pub struct Hart {
     /// Start of the code area and its bytes between blocks, see [`Hart::place`].
     area: u64,
     fill: Vec<u8>,
+
+    // Variables & Mutables
+    pub bbs: Vec<BasicBlock>,
+    state: HartState,
 }
 
 impl Hart {
@@ -518,9 +521,11 @@ impl Hart {
     }
 }
 
-/// Values `_init` writes: the CSRs' values from [`crate::csrs::init_csrs`],
-/// then f0-f31 (with F), then x1-x31. The memory bases hold their addresses,
-/// the registers random values.
+/// Initialize values in `_init`. The memory bases hold their addresses, the registers random values.
+/// Layout: 
+/// 1. [`crate::csrs::init_csrs`],
+/// 2. f0-f32
+/// 3. x1-x31
 fn init_values(
     rng: &mut (impl Rng + ?Sized),
     target: &Target,
@@ -698,24 +703,30 @@ fn check_block(values: &[u64], target: &Target, pool: Option<usize>) -> Result<B
 /// Point the trap vector `csr` (direct mode) at `offset` bytes from the first
 /// instruction of this sequence. Always three instructions so the offset can
 /// be patched in once the code in between is known.
-fn set_tvec(csr: Csr, offset: i64) -> [Instruction; 3] {
+fn set_tvec(csr: Csr, offset: i64) -> Vec<Instruction> {
     let hi = (offset + 0x800) >> 12;
-    [
-        Instruction::Auipc {
+    let mut instrs: Vec<Instruction> = vec![];
+    if hi != 0 {
+        instrs.push(Instruction::Auipc {
             rd: XReg::X5,
             imm: hi as i32,
-        },
+        });
+    } 
+    instrs.push(
         Instruction::Addi {
             rd: XReg::X5,
             rs1: XReg::X5,
             imm: (offset - (hi << 12)) as i32,
-        },
+        }
+    );
+    instrs.push(
         Instruction::Csrrw {
             rd: XReg::ZERO,
             rs1: XReg::X5,
             csr,
-        },
-    ]
+        }
+    );
+    instrs
 }
 
 /// Machine-mode trap handler. Every trap reaching it (illegal instruction,

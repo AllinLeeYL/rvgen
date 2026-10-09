@@ -268,10 +268,12 @@ pub fn generate(opts: &CommonOpts) -> Result<Vec<u8>> {
     )?;
     target.medeleg_mask = opts.medeleg_mask;
     target.misaligned_traps = opts.misaligned_traps;
+    
     let self_check = !opts.no_self_check;
     let entangle = (self_check && !opts.no_entangle).then_some(opts.guard_threshold);
     let golden_section = !opts.inline_golden && opts.xlen == Xlen::X64;
     let weights = opts.instr_weights().checked(&target, entangle.is_some())?;
+    
     let spike = Spike::new(&opts.spike, &target);
     let seed = opts.seed.unwrap_or_else(rand::random);
     let mut orchestrator =

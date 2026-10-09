@@ -18,14 +18,20 @@ pub struct Target {
     pub num_cores: usize,
     pub num_instrs: usize,
     pub physical_memory: MemoryRegion,
+    
     /// Data section size; `None` draws one per program.
     pub scratch_size: Option<u64>,
+    
+    /// self-modifying-code section size
     pub smc_size: u64,
+    
     /// PMP entries the target implements (pmpaddr0 on).
     pub pmp_regions: usize,
+    
     /// `medeleg` bits the device and Spike both delegate; traps are only
     /// routed to S through these (see [`crate::privilege`]). 0 by default.
     pub medeleg_mask: u64,
+    
     /// Whether misaligned loads and stores trap, so they can be raised on
     /// purpose. False by default.
     pub misaligned_traps: bool,
