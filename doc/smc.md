@@ -70,8 +70,10 @@ fresh mode otherwise.
   already gives S and U RWX on all of RAM. Workload stores never target
   `.text`, which is private.
 - **Spike** runs the draft through the real store → `fence.i` → execute path,
-  so probes inside `S` are correct. Spike's `until pc` stops at each probe in
-  execution order, so `A` and `S` sharing addresses is fine. Spike always
+  so probes inside `S` are correct. Spike's `until pc` stops the first time
+  an address is reached, which for a probe inside `S` could be `A` running at
+  that address. So `probe_pcs` first stops Spike at the start of `F`, which
+  runs after `A` at an address nothing ran at before. Spike always
   behaves as if `fence.i` worked, so whether the fence actually works can only
   be tested on the device under test.
 

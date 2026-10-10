@@ -565,10 +565,14 @@ impl Hart {
 
     /// Addresses at which Spike must report the registers of each
     /// entanglement site, in the order they are reached: each block runs
-    /// once, in execution order.
+    /// once, in execution order. The start of each [`is_waypoint`] block comes
+    /// before its sites'; its registers are not used.
     pub fn probe_pcs(&self, xlen: Xlen) -> Vec<u64> {
         let mut pcs = Vec::new();
         for bb in &self.bbs {
+            if is_waypoint(bb) {
+                pcs.push(bb.addr);
+            }
             for site in &bb.sites {
                 if let Some(index) = site.probe_index(xlen) {
                     pcs.push(bb.addr + code_size(&bb.instrs[..index]) as u64);
@@ -578,7 +582,7 @@ impl Hart {
         pcs
     }
 
-    /// Patch Spike's register values, one per site in [`Hart::probe_pcs`]
+    /// Patch Spike's register values, one per address in [`Hart::probe_pcs`]
     /// order, into the entanglement sites. Sites keep their sizes.
     pub fn patch_entanglements(
         &mut self,
@@ -588,6 +592,9 @@ impl Hart {
     ) -> Result<()> {
         let mut states = states.iter();
         for bb in self.bbs.iter_mut() {
+            if is_waypoint(bb) {
+                states.next().ok_or_else(|| anyhow!("missing register values for a waypoint"))?;
+            }
             for site in bb.sites.iter_mut() {
                 if site.probe_index(target.xlen).is_none() {
                     continue;
@@ -629,6 +636,15 @@ impl Hart {
         self.label_index(CHECK_LABEL)
             .ok_or_else(|| anyhow!("hart has no self-check block"))
     }
+}
+
+/// Whether Spike must stop at the start of `bb` before going on to the next
+/// probe: a block holding a `fence.i`. It runs between an old block and the SMC
+/// block reusing its address, at an address nothing ran at before, so Spike's
+/// `until pc` cannot take the old block's pass through a site's address for
+/// the SMC block's.
+fn is_waypoint(bb: &BasicBlock) -> bool {
+    !bb.is_smc && bb.instrs.contains(&Instruction::FenceI)
 }
 
 /// Initialize values in `_init`. The memory bases hold their addresses, the registers random values.

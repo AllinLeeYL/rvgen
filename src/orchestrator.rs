@@ -325,7 +325,7 @@ pub fn gen_many(opts: ManyOpts) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::riscv::Extension::{A, C, I, M, Zicsr, Zifencei};
+    use crate::riscv::Extension::{A, C, D, F, I, M, Zicsr, Zifencei};
 
     /// SMC programs pass on Spike (checked by `generate`), and every SMC
     /// block's code is absent from the image: stale bytes sit at its address.
@@ -351,5 +351,58 @@ mod tests {
             }
         }
         assert!(fresh > 0 && aliased > 0, "fresh {fresh}, aliased {aliased}");
+    }
+
+    /// Options of the BOOM campaign that found the stale probes.
+    fn smc_opts(seed: u64) -> CommonOpts {
+        let mut opts = CommonOpts::default();
+        opts.isa = vec![I, M, A, F, D, C, Zicsr, Zifencei];
+        opts.num_instrs = 4096;
+        opts.smc_proba = 0.3;
+        opts.medeleg_mask = 0xb15d;
+        opts.misaligned_traps = true;
+        opts.seed = Some(seed);
+        opts
+    }
+
+    /// The final program of `seed` passes on Spike, run here once more.
+    fn passes_on_spike(seed: u64) -> Result<()> {
+        let opts = smc_opts(seed);
+        let (orchestrator, image) = generate_with(&opts)?;
+        let code = Spike::new(&opts.spike, &orchestrator.target).exit_code(&image)?;
+        ensure!(code == 0, "exit code {code}");
+        Ok(())
+    }
+
+    /// Seeds whose SMC block has a probe at an address its old block ran at
+    /// with other registers: Spike must report the SMC block's pass.
+    #[test]
+    fn smc_probes_skip_the_old_block() {
+        for seed in [7147, 15773, 20180, 20872] {
+            passes_on_spike(seed).unwrap_or_else(|error| panic!("seed {seed}: {error:#}"));
+        }
+    }
+
+    /// Many SMC programs pass on Spike. Slow: `mise run test-smc`.
+    #[test]
+    #[ignore]
+    fn smc_programs_pass_on_spike() {
+        let seeds = std::sync::atomic::AtomicU64::new(0);
+        let failures = std::sync::Mutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            for _ in 0..std::thread::available_parallelism().map_or(1, usize::from) {
+                scope.spawn(|| loop {
+                    let seed = seeds.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if seed >= 30000 {
+                        break;
+                    }
+                    if let Err(error) = passes_on_spike(seed) {
+                        failures.lock().unwrap().push(format!("seed {seed}: {error:#}"));
+                    }
+                });
+            }
+        });
+        let failures = failures.into_inner().unwrap();
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 }

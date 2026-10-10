@@ -9,6 +9,10 @@ sources = [
 ]
 outputs = ["./rvgen"]
 
+[tasks.test-smc]
+description = "Generate 30000 self-modifying programs and check that each passes on Spike"
+run = "cargo test --release smc_programs_pass_on_spike -- --ignored"
+
 [tasks.disassemble]
 run = [
     "riscv64-unknown-elf-objdump --disassemble",
