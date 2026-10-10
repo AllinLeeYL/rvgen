@@ -67,7 +67,7 @@ impl Orchestrator {
         weights: InstrWeights,
     ) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
-        let harts = std::iter::repeat_with(|| Hart::new(target.num_instrs, &mut rng))
+        let harts = std::iter::repeat_with(|| Hart::new(target.num_instrs, target.smc_proba, &mut rng))
             .take(target.num_cores)
             .collect();
 
@@ -97,7 +97,7 @@ impl Orchestrator {
             }
             Err(_) => Vec::new(),
         };
-        let _ = state.memory.reserve(&target.physical_memory, "smc", target.smc_size, 4, Permissions::RWX);
+        
         // Private 4 KiB regions the low PMP entries guard, for planned access
         // faults in S and U; the last entry stays for everything else.
         let regions = target.pmp_regions.saturating_sub(1).min(MAX_PMP_WINDOW_REGIONS);
@@ -132,6 +132,8 @@ impl Orchestrator {
                 self.entangle,
                 self.golden_section,
             )?;
+            // Before any size is summed: the store sites grow the code.
+            core.plan_smc(&self.target, &mut self.rng)?;
         }
         // Golden values are only counted once the sites exist. Sections are
         // reserved downwards from the top of RAM, so this one lands below the
@@ -159,11 +161,11 @@ impl Orchestrator {
             );
             let size = log_uniform(min, MAX_CODE_AREA, &mut self.rng) / 4 * 4;
             let start = self.target.physical_memory.start;
-            let region = MemoryRegion { start, size, permissions: Permissions::RX };
+            let region = MemoryRegion { start, size };
             self.state.memory.add(Section {
                 name: ".text".into(),
                 alignment: 4,
-                permissions: Permissions::RX,
+                permissions: Permissions::RWX,
                 region,
                 private: true,
             });
@@ -209,7 +211,7 @@ impl Orchestrator {
             .ok()
             .map(|section| section.region.start);
         if let Some(hart) = self.harts.first_mut() {
-            hart.link(golden_addr, self.target.xlen)?;
+            hart.link(golden_addr, &self.target)?;
         }
         Ok(())
     }
@@ -249,10 +251,14 @@ impl Orchestrator {
 /// Generate one program return the ELF bytecode. Spike is run
 /// here when the program self-checks.
 pub fn generate(opts: &CommonOpts) -> Result<Vec<u8>> {
+    Ok(generate_with(opts)?.1)
+}
+
+/// [`generate`], also returning the generator's final state.
+fn generate_with(opts: &CommonOpts) -> Result<(Orchestrator, Vec<u8>)> {
     let ram = MemoryRegion {
         start: opts.ram_base,
         size: opts.ram_size,
-        permissions: Permissions::RWX,
     };
     let mut target = Target::new(
         opts.xlen,
@@ -268,6 +274,8 @@ pub fn generate(opts: &CommonOpts) -> Result<Vec<u8>> {
     )?;
     target.medeleg_mask = opts.medeleg_mask;
     target.misaligned_traps = opts.misaligned_traps;
+    ensure!((0.0..=1.0).contains(&opts.smc_proba), "--smc-proba must lie in 0..=1");
+    target.smc_proba = opts.smc_proba;
     
     let self_check = !opts.no_self_check;
     let entangle = (self_check && !opts.no_entangle).then_some(opts.guard_threshold);
@@ -282,11 +290,12 @@ pub fn generate(opts: &CommonOpts) -> Result<Vec<u8>> {
     // generate code -- it allocate memory address on the fly
     orchestrator.run()?;
     orchestrator.link()?;
-    if self_check {
-        orchestrator.resolve_self_check(&spike)
+    let image = if self_check {
+        orchestrator.resolve_self_check(&spike)?
     } else {
-        orchestrator.encode()
-    }
+        orchestrator.encode()?
+    };
+    Ok((orchestrator, image))
 }
 
 pub fn gen_one(opts: OneOpts, mkdir: bool) -> Result<()> {
@@ -311,4 +320,36 @@ pub fn gen_many(opts: ManyOpts) -> Result<()> {
         gen_one(oneopts, false)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::riscv::Extension::{A, C, I, M, Zicsr, Zifencei};
+
+    /// SMC programs pass on Spike (checked by `generate`), and every SMC
+    /// block's code is absent from the image: stale bytes sit at its address.
+    #[test]
+    fn smc_blocks_are_stored_at_run_time() {
+        let (mut fresh, mut aliased) = (0, 0);
+        for (seed, isa) in (0..12).zip([vec![I, M, C, Zicsr, Zifencei], vec![I, M, A, Zicsr, Zifencei]].iter().cycle()) {
+            let mut opts = CommonOpts::default();
+            opts.isa = isa.clone();
+            opts.num_instrs = 2000;
+            opts.smc_proba = 0.3;
+            opts.seed = Some(seed);
+            let (orchestrator, _) = generate_with(&opts).unwrap();
+            let hart = &orchestrator.harts[0];
+            let target = &orchestrator.target;
+            let text = hart.image().iter().map(|bb| bb.encode(target).unwrap()).collect::<Vec<_>>().concat();
+            let start = target.physical_memory.start;
+            for bb in hart.bbs.iter().filter(|bb| bb.is_smc) {
+                let code = bb.encode(target).unwrap();
+                let at = (bb.addr - start) as usize;
+                assert_ne!(&text[at..at + code.len()], &code[..], "SMC block shipped in the image");
+                if bb.alias.is_some() { aliased += 1 } else { fresh += 1 }
+            }
+        }
+        assert!(fresh > 0 && aliased > 0, "fresh {fresh}, aliased {aliased}");
+    }
 }

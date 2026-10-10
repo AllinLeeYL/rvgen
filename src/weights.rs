@@ -173,7 +173,7 @@ fn check_weight(what: &str, weight: f64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::{MemoryRegion, Permissions};
+    use crate::memory::{MemoryRegion};
     use crate::riscv::{Extension, Xlen};
     use rand::{SeedableRng, rngs::StdRng};
     use std::collections::HashSet;
@@ -189,7 +189,6 @@ mod tests {
             MemoryRegion {
                 start: 0x8000_0000,
                 size: 0x0800_0000,
-                permissions: Permissions::default(),
             },
             Some(0),
             0,

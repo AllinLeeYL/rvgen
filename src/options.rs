@@ -49,6 +49,12 @@ pub struct CommonOpts {
     #[arg(long, default_value = "8192")]
     pub smc_size: u64,
 
+    // Probability that a workload block is self-modifying: its code is
+    // stored by earlier code, then made visible with `fence.i` (needs
+    // zifencei; see doc/smc.md). 0 disables SMC.
+    #[arg(long, default_value = "0.1")]
+    pub smc_proba: f64,
+
     // PMP entries the target implements (at most 16); `_init` configures
     // them, never locked. 0 leaves PMP untouched.
     #[arg(long, default_value = "8")]

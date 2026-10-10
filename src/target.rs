@@ -35,6 +35,10 @@ pub struct Target {
     /// Whether misaligned loads and stores trap, so they can be raised on
     /// purpose. False by default.
     pub misaligned_traps: bool,
+
+    /// Probability that a workload block is self-modifying (see
+    /// [`crate::hart::Hart::plan_smc`]). 0 by default.
+    pub smc_proba: f64,
 }
 
 impl Target {
@@ -91,6 +95,7 @@ impl Target {
             pmp_regions,
             medeleg_mask: 0,
             misaligned_traps: false,
+            smc_proba: 0.0,
         })
     }
 

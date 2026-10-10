@@ -4,7 +4,7 @@ use anyhow::{Ok, Result, anyhow, ensure};
 use rand::rngs::StdRng;
 use rand::{Rng, RngExt};
 
-use crate::basicblock::BasicBlock;
+use crate::basicblock::{BasicBlock, SmcStore, store_widths};
 use crate::entangle::{GOLDEN_SLOT_SIZE, PoolRef, SiteBuilder, code_size, use_compressed};
 use crate::membase::MemBases;
 use crate::orchestrator::PMP_WINDOW_SECTION;
@@ -74,14 +74,14 @@ pub struct Hart {
 }
 
 impl Hart {
-    pub fn new(num_instrs: usize, rng: &mut StdRng) -> Self {
+    pub fn new(num_instrs: usize, smc_proba: f64, rng: &mut StdRng) -> Self {
         // Randomly distribute budgets to basic blocks
         let core = Self {
             state: HartState::default(),
             bbs: cut_cake_randomly(num_instrs, Some(1), Some(32), rng)
                 .into_iter()
                 .enumerate()
-                .map(|(id, budget)| BasicBlock::new(id, rng.random::<bool>(), budget))
+                .map(|(id, budget)| BasicBlock::new(id, rng.random_bool(smc_proba), budget))
                 .collect(),
             ..Default::default()
         };
@@ -295,6 +295,101 @@ impl Hart {
         Ok(())
     }
 
+    /// Give each SMC block a store site writing its code and a later
+    /// `fence.i`, each at the start of a random earlier non-SMC block, and,
+    /// when it can, the address of an earlier block that has run by then, so
+    /// the stores overwrite executed code. Blocks run once, in index order:
+    /// old block < store < fence.i < SMC block. Before [`Hart::place`], as it
+    /// grows the code. See `doc/smc.md`.
+    pub fn plan_smc(&mut self, target: &Target, rng: &mut (impl Rng + ?Sized)) -> Result<()> {
+        let end = self
+            .label_index(CHECK_LABEL)
+            .or_else(|| self.label_index(EXIT_LABEL))
+            .ok_or_else(|| anyhow!("hart has no epilogue"))?;
+        let unit = target.instruction_alignment();
+        let reserved: Vec<_> = self.state.mem_bases.bases.iter().map(|base| base.reg).collect();
+        let short = |bb: &BasicBlock| bb.sites.iter().any(|site| site.reach().is_some_and(|reach| reach < 1 << 20));
+        let usable = |bb: &BasicBlock| !bb.is_smc && bb.landing.is_none();
+        let mut aliased = vec![false; self.bbs.len()];
+        for smc in 0..self.bbs.len() {
+            if !self.bbs[smc].is_smc {
+                continue;
+            }
+            let size = code_size(&self.bbs[smc].instrs);
+            // Stores reach 2 KiB past their pointer.
+            if smc < 3 || smc >= end || !target.has(Extension::Zifencei) || size == 0 || size > 2048 {
+                self.bbs[smc].is_smc = false;
+                continue;
+            }
+            // Its address is forced to the old block's, so nothing may need
+            // it nearby: it starts its own chain, nothing follows it, and
+            // neither the jump into it nor the one out of it is short.
+            let s = &self.bbs[smc];
+            let free = s.after.is_none()
+                && s.landing.is_none()
+                && s.align == 0
+                && !short(s)
+                && !short(&self.bbs[smc - 1])
+                && self.bbs.iter().all(|bb| bb.after != Some(smc));
+            let olds: Vec<_> = (2..smc - 1)
+                // Padding the old block must not stretch a short jump out of it.
+                .filter(|&old| free && usable(&self.bbs[old]) && !short(&self.bbs[old]) && !aliased[old])
+                .collect();
+            let alias = (!olds.is_empty() && rng.random_bool(0.5)).then(|| olds[rng.random_range(0..olds.len())]);
+            // A store at the start of the old block would overwrite it before it runs.
+            let first_host = alias.map_or(2, |old| old + 1);
+            let hosts: Vec<_> = (first_host..smc).filter(|&index| usable(&self.bbs[index])).collect();
+            if hosts.is_empty() {
+                self.bbs[smc].is_smc = false;
+                continue;
+            }
+            let host = hosts[rng.random_range(0..hosts.len())];
+            let later: Vec<_> = hosts.iter().copied().filter(|&index| index >= host).collect();
+            let fence = later[rng.random_range(0..later.len())];
+            let mut regs: Vec<_> = (1..32)
+                .map(|index| XReg::new(index).expect("valid register"))
+                .filter(|reg| !reserved.contains(reg))
+                .collect();
+            let rptr = regs.swap_remove(rng.random_range(0..regs.len()));
+            let rval = regs.swap_remove(rng.random_range(0..regs.len()));
+            let store = SmcStore { at: 0, smc, rptr, rval, widths: store_widths(size, unit, rng) };
+            // The fence goes in first: in the same block, the store precedes it.
+            self.bbs[fence].prepend(&[Instruction::FenceI]);
+            self.bbs[host].prepend(&vec![Instruction::nop(); store.len()]);
+            self.bbs[host].smc_stores.insert(0, store);
+            if let Some(old) = alias {
+                aliased[old] = true;
+                self.bbs[smc].alias = Some(old);
+            }
+        }
+        // Pad each old block past its exit, never executed, so its SMC block
+        // fits. Sizes are final now.
+        let pad = if unit == 2 { Instruction::cnop() } else { Instruction::nop() };
+        for smc in 0..self.bbs.len() {
+            if let Some(old) = self.bbs[smc].alias {
+                let missing = code_size(&self.bbs[smc].instrs).saturating_sub(code_size(&self.bbs[old].instrs));
+                self.bbs[old].instrs.extend(std::iter::repeat_n(pad, missing / unit));
+            }
+        }
+        Ok(())
+    }
+
+    /// Write each SMC block's current code into the store sites writing it.
+    /// Store sites are never in SMC blocks, so one pass will do.
+    fn render_smc_stores(&mut self, target: &Target) -> Result<()> {
+        for host in 0..self.bbs.len() {
+            for k in 0..self.bbs[host].smc_stores.len() {
+                let store = self.bbs[host].smc_stores[k].clone();
+                let code = self.bbs[store.smc].encode(target)?;
+                let smc_addr = self.bbs[store.smc].addr;
+                let bb = &mut self.bbs[host];
+                let pc = bb.addr + code_size(&bb.instrs[..store.at]) as u64;
+                store.render(&mut bb.instrs, pc, smc_addr, &code, target.xlen);
+            }
+        }
+        Ok(())
+    }
+
     /// Address of the self-check block.
     pub fn self_check_pc(&self) -> Result<u64> {
         Ok(self.bbs[self.get_self_check_bb_index()?].addr)
@@ -371,6 +466,13 @@ impl Hart {
         let mut used = BTreeMap::new();
         let mut placed = vec![false; self.bbs.len()];
         for first in 0..self.bbs.len() {
+            // An SMC block overwriting an old one takes its address; the old
+            // one comes first, so it is placed already.
+            if let Some(old) = self.bbs[first].alias {
+                self.bbs[first].addr = self.bbs[old].addr;
+                placed[first] = true;
+                continue;
+            }
             let mut head = first;
             // Place `head`'s chain, then right away the chain its last block
             // reaches with a short jump, and so on, while the room is free.
@@ -427,9 +529,15 @@ impl Hart {
         let mut image = Vec::new();
         let mut at = self.area;
         for bb in blocks {
+            // An SMC block's bytes are stored at run time: the old block's
+            // code, or random fill, is there in the image.
+            if bb.alias.is_some() {
+                continue;
+            }
             image.push(raw(at, bb.addr));
-            image.push(bb.clone());
-            at = bb.addr + code_size(&bb.instrs) as u64;
+            let end = bb.addr + code_size(&bb.instrs) as u64;
+            image.push(if bb.is_smc { raw(bb.addr, end) } else { bb.clone() });
+            at = end;
         }
         image.push(raw(at, self.area + self.fill.len() as u64));
         image
@@ -437,7 +545,8 @@ impl Hart {
 
     /// Fix the code's addresses, given the blocks' places and that `.golden`
     /// starts at `golden_addr`, and render the sites' placeholders.
-    pub fn link(&mut self, golden_addr: Option<u64>, xlen: Xlen) -> Result<()> {
+    pub fn link(&mut self, golden_addr: Option<u64>, target: &Target) -> Result<()> {
+        let xlen = target.xlen;
         let fail_addr = self.label_index(FAIL_LABEL).map(|fail| self.bbs[fail].addr);
         let landings: HashMap<_, _> =
             self.bbs.iter().filter_map(|bb| Some((bb.landing?, bb.addr))).collect();
@@ -451,7 +560,7 @@ impl Hart {
             }
             bb.render_sites(xlen)?;
         }
-        Ok(())
+        self.render_smc_stores(target)
     }
 
     /// Addresses at which Spike must report the registers of each
@@ -491,7 +600,8 @@ impl Hart {
             bb.render_sites(target.xlen)?;
         }
         ensure!(states.next().is_none(), "more register values than sites");
-        Ok(())
+        // SMC blocks' sites changed; their store sites keep their sizes.
+        self.render_smc_stores(target)
     }
 
     fn label_index(&self, label: &str) -> Option<usize> {
@@ -706,12 +816,10 @@ fn check_block(values: &[u64], target: &Target, pool: Option<usize>) -> Result<B
 fn set_tvec(csr: Csr, offset: i64) -> Vec<Instruction> {
     let hi = (offset + 0x800) >> 12;
     let mut instrs: Vec<Instruction> = vec![];
-    if hi != 0 {
-        instrs.push(Instruction::Auipc {
-            rd: XReg::X5,
-            imm: hi as i32,
-        });
-    } 
+    instrs.push(Instruction::Auipc {
+        rd: XReg::X5,
+        imm: hi as i32,
+    });
     instrs.push(
         Instruction::Addi {
             rd: XReg::X5,

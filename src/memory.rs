@@ -32,17 +32,12 @@ impl Permissions {
         write: true,
         execute: true,
     };
-
-    fn permits(self, required: Self) -> bool {
-        (!required.write || self.write) && (!required.execute || self.execute)
-    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct MemoryRegion {
     pub start: u64,
     pub size: u64,
-    pub permissions: Permissions,
 }
 
 impl MemoryRegion {
@@ -116,10 +111,6 @@ impl MemoryLayout {
             .ok_or_else(|| anyhow!("section {name} does not fit RAM"))?
             & !(alignment - 1);
         ensure!(start >= ram.start, "section {name} does not fit RAM");
-        ensure!(
-            ram.permissions.permits(permissions),
-            "section {name} permissions exceed RAM permissions"
-        );
         self.add(Section {
             name: name.into(),
             alignment,
@@ -127,7 +118,6 @@ impl MemoryLayout {
             region: MemoryRegion {
                 start,
                 size,
-                permissions,
             },
             private: false,
         });
@@ -159,11 +149,6 @@ impl MemoryLayout {
             ensure!(
                 section.region.start >= ram.start && end <= ram_end,
                 "section {} does not fit RAM",
-                section.name
-            );
-            ensure!(
-                ram.permissions.permits(section.permissions),
-                "section {} permissions exceed RAM permissions",
                 section.name
             );
             for other in &self.sections[..index] {

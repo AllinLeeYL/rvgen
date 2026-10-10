@@ -41,7 +41,11 @@ Configure a batch of programs:
 - `--ram-base`, `--ram-size`: allocation bounds (default: `0x80000000`, `0x08000000`).
 - `--scratch-size`: data section size in bytes (default: drawn per program,
   log-uniformly between 4 KiB and 1 MiB, see [Memory accesses](#memory-accesses)).
-- `--smc-size`: SMC section size in bytes (default: `8192`); zero omits it.
+- `--smc-proba`: probability that a workload block is self-modifying (default:
+  `0.1`; needs `zifencei` in `--isa`, otherwise no block is): earlier code
+  stores its bytes, often over a block that already ran, and a `fence.i`
+  precedes it. See [doc/smc.md](doc/smc.md).
+- `--smc-size`: unused; SMC blocks live in `.text`.
 - `--pmp-regions`: PMP entries the target implements, at most 16 (default:
   `8`); `_init` configures them (see [CSRs](#csrs)), and Spike runs with as
   many. `0` leaves PMP untouched.
@@ -422,7 +426,7 @@ Use `./target/release/rvgen --help`, `one --help`, or `many --help` to inspect t
 
 `Orchestrator` owns the fixed target, per-core basic blocks, shared mutable state,
 and RNG. The CLI reserves 8-byte `.tohost` and `.fromhost` sections aligned to
-64 bytes, scratch, and optional SMC memory at the top of RAM, then `.golden`
+64 bytes and scratch at the top of RAM, then `.golden`
 below them once generation knows how many constants the code loads, and
 reserves core 0's code area at the RAM base. `Elf::new(&target).encode(bbs,
 &memory)` preserves the supplied instruction order, section addresses, sizes,

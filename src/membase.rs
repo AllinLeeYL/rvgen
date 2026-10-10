@@ -315,7 +315,6 @@ mod tests {
             region: MemoryRegion {
                 start,
                 size,
-                permissions: Permissions::RW,
             },
             private: false,
         }

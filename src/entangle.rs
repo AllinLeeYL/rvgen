@@ -846,7 +846,7 @@ mod tests {
 
     /// An RV64I machine-mode target.
     fn test_target() -> Target {
-        use crate::memory::{MemoryRegion, Permissions};
+        use crate::memory::{MemoryRegion};
         use crate::riscv::Extension;
         Target::new(
             Xlen::X64,
@@ -858,7 +858,6 @@ mod tests {
             MemoryRegion {
                 start: 0x8000_0000,
                 size: 0x1000,
-                permissions: Permissions::default(),
             },
             Some(0),
             0,
