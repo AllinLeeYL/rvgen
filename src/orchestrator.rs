@@ -9,8 +9,8 @@ use crate::entangle::{GOLDEN_SLOT_SIZE, code_size};
 use crate::hart::Hart;
 use crate::memory::{MemoryLayout, MemoryRegion, Permissions, Section};
 use crate::options::{CommonOpts, ManyOpts, OneOpts};
-use crate::privilege::{MAX_PMP_WINDOW_REGIONS, PMP_REGION};
-use crate::riscv::{PrivilegeLevel, Xlen};
+use crate::privilege::{Cause, MAX_PMP_WINDOW_REGIONS, PMP_REGION};
+use crate::riscv::{Csr, PrivilegeLevel, Xlen};
 use crate::spike::Spike;
 use crate::target::Target;
 use crate::utils::log_uniform;
@@ -151,16 +151,31 @@ impl Orchestrator {
             golden.private = true;
         }
         // The code area goes at the bottom of RAM, below the data reserved
-        // from the top, at least four times the code so blocks find room within reach.
+        // from the top, four times the code where it fits so blocks find room within reach.
         if let Some(hart) = self.harts.first_mut() {
             let code: u64 = hart.bbs.iter().map(|bb| code_size(&bb.instrs) as u64).sum();
             let min = (4 * code).max(MIN_CODE_AREA);
-            ensure!(
-                min <= MAX_CODE_AREA,
-                "{code} bytes of code need more than the {MAX_CODE_AREA}-byte code area; lower --num-instrs"
-            );
-            let size = log_uniform(min, MAX_CODE_AREA, &mut self.rng) / 4 * 4;
+            // The code area ends where the data reserved from the top starts.
             let start = self.target.physical_memory.start;
+            let data = self.state.memory.sections.iter().map(|section| section.region.start).min();
+            let max = MAX_CODE_AREA.min(data.map_or(self.target.physical_memory.size, |data| data - start));
+            let size = match self.target.code_area_size {
+                Some(size) => {
+                    ensure!(size <= max, "--code-area-size exceeds the {max} bytes left below the data");
+                    ensure!(code <= size, "{code} bytes of code do not fit --code-area-size {size}");
+                    size
+                }
+                None => {
+                    // Large programs settle for less room, down to twice the code.
+                    let min = if 2 * code <= max { min.min(max) } else { min };
+                    ensure!(
+                        min <= max,
+                        "{code} bytes of code need more than the {max}-byte code area; \
+                         lower --num-instrs (or --scratch-size on a small RAM)"
+                    );
+                    log_uniform(min, max, &mut self.rng)
+                }
+            } / 4 * 4;
             let region = MemoryRegion { start, size };
             self.state.memory.add(Section {
                 name: ".text".into(),
@@ -272,8 +287,40 @@ fn generate_with(opts: &CommonOpts) -> Result<(Orchestrator, Vec<u8>)> {
         opts.smc_size,
         opts.pmp_regions,
     )?;
+    target.code_area_size = opts.code_area_size;
     target.medeleg_mask = opts.medeleg_mask;
     target.misaligned_traps = opts.misaligned_traps;
+    ensure!(!opts.tvec_modes.is_empty(), "--tvec-modes needs direct, vectored or both");
+    target.tvec_modes = opts.tvec_modes.iter().copied().collect();
+    for (flag, align) in [("--tvec-align", opts.tvec_align), ("--vectored-tvec-align", opts.vectored_tvec_align)] {
+        ensure!(align >= 4 && align.is_power_of_two(), "{flag} must be a power of two, at least 4");
+    }
+    target.tvec_align = opts.tvec_align;
+    target.vectored_tvec_align = opts.vectored_tvec_align;
+    for (flag, proba) in [
+        ("--vectored-proba", opts.vectored_proba),
+        ("--switch-proba", opts.switch_proba),
+        ("--config-proba", opts.config_proba),
+    ] {
+        ensure!(proba.is_none_or(|proba| (0.0..=1.0).contains(&proba)), "{flag} must lie in 0..=1");
+    }
+    target.vectored_proba = opts.vectored_proba;
+    target.switch_proba = opts.switch_proba;
+    target.config_proba = opts.config_proba;
+    for &(cause, weight) in &opts.trap_weights {
+        ensure!(weight >= 0.0 && weight.is_finite(), "--trap-weight needs a non-negative weight");
+        // The only traps sure to bring S and U code back to M before `_check`.
+        ensure!(
+            weight > 0.0 || !matches!(cause, Cause::EcallU | Cause::EcallS),
+            "--trap-weight cannot exclude ecall-u or ecall-s: they return the hart to M"
+        );
+        target.trap_weights[cause as usize] = Some(weight);
+    }
+    target.disabled_csrs = opts.disabled_csrs.clone();
+    target.disabled_illegal = opts.disabled_illegal.clone();
+    for csr in [Csr::MSCRATCH, Csr::MEPC, Csr::MCAUSE, Csr::SEPC, Csr::SCAUSE] {
+        ensure!(target.has_csr(csr), "--disabled-csrs cannot name {csr}: the generated code relies on it");
+    }
     ensure!((0.0..=1.0).contains(&opts.smc_proba), "--smc-proba must lie in 0..=1");
     target.smc_proba = opts.smc_proba;
     
@@ -351,6 +398,34 @@ mod tests {
             }
         }
         assert!(fresh > 0 && aliased > 0, "fresh {fresh}, aliased {aliased}");
+    }
+
+    /// A vectored-only target (Ibex) reaches every landing and sink handler
+    /// through a 256-byte aligned BASE, and never sees a disabled CSR or cause.
+    #[test]
+    fn target_options_shape_the_traps() {
+        use crate::privilege::TvecMode;
+        let mut opts = CommonOpts::default();
+        opts.isa = vec![I, M, C, Zicsr];
+        opts.xlen = Xlen::X32;
+        opts.privileges = vec![PrivilegeLevel::Machine, PrivilegeLevel::User];
+        opts.pmp_regions = 0;
+        opts.tvec_modes = vec![TvecMode::Vectored];
+        opts.switch_proba = Some(0.3);
+        opts.trap_weights = vec![("breakpoint".parse().unwrap(), 0.0)];
+        opts.disabled_csrs = vec!["mhpmevent".parse().unwrap(), "0x320".parse().unwrap()];
+        opts.disabled_illegal = vec!["cycle-write".parse().unwrap()];
+        opts.seed = Some(1);
+        let (orchestrator, _) = generate_with(&opts).unwrap();
+        let hart = &orchestrator.harts[0];
+        let landings: Vec<_> = hart.bbs.iter().filter(|bb| bb.landing.is_some()).collect();
+        assert!(landings.len() > 2, "no planned trap");
+        assert!(landings.iter().all(|bb| bb.addr % 256 == 0));
+        let text = hart.bbs.iter().flat_map(|bb| &bb.instrs).map(|instr| format!("{instr:?}")).collect::<String>();
+        assert!(text.contains("Ecall") && text.contains("Csr(832)"), "the text shows instructions and CSRs");
+        assert!(!text.contains("Ebreak") && !text.contains("Csr(3072)"), "a disabled trap is raised");
+        assert!(!(0x320..=0x33f).any(|csr| text.contains(&format!("Csr({csr})"))), "a disabled CSR is accessed");
+        assert!("mhpmcounter32".parse::<crate::csrs::CsrRange>().is_err());
     }
 
     /// Options of the BOOM campaign that found the stale probes.

@@ -1,3 +1,5 @@
+use crate::csrs::CsrRange;
+use crate::privilege::{Cause, IllegalForm, TvecMode};
 use crate::riscv::{Extension, InstructionClass, Opcode, PrivilegeLevel, Xlen};
 use crate::weights::InstrWeights;
 use clap::{Args, Parser};
@@ -45,6 +47,14 @@ pub struct CommonOpts {
     #[arg(long, value_parser = parse_address)]
     pub scratch_size: Option<u64>,
 
+    // Code area size in bytes: the blocks are scattered over it and random
+    // bytes fill the gaps. Drawn per program when omitted, log-uniformly
+    // between four times the code (at least 16 KiB) and 1 MiB or the RAM left
+    // below the data. A fixed size only needs to hold the code; a small one
+    // keeps the image short for targets that load it slowly.
+    #[arg(long, value_parser = parse_address)]
+    pub code_area_size: Option<u64>,
+
     // Writable/executable SMC section size in bytes; zero omits the section.
     #[arg(long, default_value = "8192")]
     pub smc_size: u64,
@@ -70,6 +80,61 @@ pub struct CommonOpts {
     // raise them on purpose.
     #[arg(long)]
     pub misaligned_traps: bool,
+
+    // Trap vector modes `mtvec`/`stvec` implement: `direct`, `vectored` or
+    // both. With one, every vector is written in that mode, the sink
+    // handlers' included (Ibex is vectored only).
+    #[arg(long, default_value = "direct,vectored", value_delimiter = ',')]
+    pub tvec_modes: Vec<TvecMode>,
+
+    // Alignment in bytes the target forces on a direct-mode trap vector's
+    // BASE; landings armed in direct mode are aligned to it.
+    #[arg(long, default_value = "4", value_parser = parse_address)]
+    pub tvec_align: u64,
+
+    // The same for a vectored-mode trap vector (Rocket and Ibex ignore
+    // BASE's low 8 bits then).
+    #[arg(long, default_value = "256", value_parser = parse_address)]
+    pub vectored_tvec_align: u64,
+
+    // Probability that a trap vector is armed in vectored mode, where
+    // `--tvec-modes` allows both; drawn per program in 0..0.5 when omitted.
+    #[arg(long)]
+    pub vectored_proba: Option<f64>,
+
+    // Probability that a block ends with a privilege switch (a descent or a
+    // planned trap); drawn per program in 0..0.3 when omitted. 0 keeps the
+    // hart in M with no planned trap.
+    #[arg(long)]
+    pub switch_proba: Option<f64>,
+
+    // Probability that a block changes the privileged configuration (FPU
+    // on/off, TSR, TVM, medeleg); drawn per program in 0..0.1 when omitted.
+    #[arg(long)]
+    pub config_proba: Option<f64>,
+
+    /// Relative weight of a planned trap's cause, as `CAUSE=WEIGHT`, e.g.
+    /// `--trap-weight illegal=4,breakpoint=0`. 0 never raises the cause;
+    /// causes not named draw a weight per program. Causes: instr-misaligned,
+    /// instr-access, illegal, breakpoint, load-misaligned, load-access,
+    /// store-misaligned, store-access, ecall-u, ecall-s, ecall-m.
+    #[arg(long = "trap-weight", value_name = "CAUSE=WEIGHT", value_delimiter = ',', value_parser = parse_weight::<Cause>)]
+    pub trap_weights: Vec<(Cause, f64)>,
+
+    /// CSRs the target does not implement, which no generated code then
+    /// accesses: names (`mcountinhibit`, `mhpmevent7`; `mhpmevent`,
+    /// `mhpmcounter` and `pmpaddr` name all of theirs), addresses (`0x320`)
+    /// or address ranges (`0x323-0x33f`).
+    #[arg(long, value_delimiter = ',')]
+    pub disabled_csrs: Vec<CsrRange>,
+
+    /// Instructions a planned illegal-instruction trap must not use, where
+    /// the target does not trap on them as Spike does: `zero` (an all-zero
+    /// word), `cycle-write` (a write to the read-only `cycle`), `mret`,
+    /// `m-csr` (an M CSR read below M), `sret`, `s-csr` (an S CSR read in U),
+    /// `tvm` (`sfence.vma`/`satp` in S with TVM), `fpu-off` (FP with the FPU off).
+    #[arg(long, value_delimiter = ',')]
+    pub disabled_illegal: Vec<IllegalForm>,
 
     // Disable specific instructions
     #[arg(long, default_value = "wfi,lr.w,lr.d", value_delimiter = ',')]

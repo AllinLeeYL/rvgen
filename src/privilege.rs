@@ -68,11 +68,6 @@ const TSR: u64 = 1 << 22;
 /// mstatus.
 pub const MSTATUS_CLEARED: u64 = SIE | MIE | SPIE | MPIE | SPP | MPP | MPRV | SUM | MXR | TVM | TW | TSR;
 
-/// Alignment of a landing reached through a vectored trap vector: BASE's low
-/// bits may be ignored in vectored mode (Rocket ignores 8), though not by
-/// Spike, and exceptions go to BASE either way.
-pub const VECTORED_LANDING_ALIGN: u64 = 256;
-
 /// Size and alignment of one PMP window region (NAPOT), coarser than any
 /// PMP granularity in practice.
 pub const PMP_REGION: u64 = 4096;
@@ -83,6 +78,24 @@ pub const MAX_PMP_WINDOW_REGIONS: usize = 4;
 pub const PMP_R: u8 = 1;
 pub const PMP_W: u8 = 2;
 pub const PMP_X: u8 = 4;
+
+/// A trap vector's MODE field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TvecMode {
+    Direct,
+    Vectored,
+}
+
+impl std::str::FromStr for TvecMode {
+    type Err = String;
+    fn from_str(value: &str) -> std::result::Result<Self, String> {
+        match value {
+            "direct" => Ok(Self::Direct),
+            "vectored" => Ok(Self::Vectored),
+            _ => Err(format!("unknown trap vector mode `{value}` (expected direct or vectored)")),
+        }
+    }
+}
 
 /// Exception causes the generator raises on purpose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,6 +127,80 @@ impl Cause {
         Cause::EcallS,
         Cause::EcallM,
     ];
+}
+
+/// Names of the causes for `--trap-weight`, in [`Cause::ALL`] order.
+const CAUSE_NAMES: [&str; 11] = [
+    "instr-misaligned",
+    "instr-access",
+    "illegal",
+    "breakpoint",
+    "load-misaligned",
+    "load-access",
+    "store-misaligned",
+    "store-access",
+    "ecall-u",
+    "ecall-s",
+    "ecall-m",
+];
+
+impl std::str::FromStr for Cause {
+    type Err = String;
+    fn from_str(value: &str) -> std::result::Result<Self, String> {
+        let name = value.to_ascii_lowercase().replace('_', "-");
+        CAUSE_NAMES
+            .iter()
+            .position(|cause| *cause == name)
+            .map(|index| Cause::ALL[index])
+            .ok_or_else(|| format!("unknown trap cause `{value}` (expected one of {})", CAUSE_NAMES.join(", ")))
+    }
+}
+
+/// The instructions a planned illegal-instruction trap may use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IllegalForm {
+    /// An all-zero word.
+    Zero,
+    /// A write to the read-only `cycle` (`unimp`).
+    CycleWrite,
+    /// Below M: `mret`.
+    Mret,
+    /// Below M: a read of `mscratch` or `mstatus`.
+    MCsr,
+    /// In U, or in S with `mstatus.TSR`: `sret`.
+    Sret,
+    /// In U: a read of `sscratch` or `sepc`.
+    SCsr,
+    /// In S with `mstatus.TVM`: `sfence.vma`, or a read of `satp`.
+    Tvm,
+    /// With the FPU off: a read of `fcsr`, or `fadd.s`.
+    FpuOff,
+}
+
+impl IllegalForm {
+    pub const ALL: [(&'static str, IllegalForm); 8] = [
+        ("zero", IllegalForm::Zero),
+        ("cycle-write", IllegalForm::CycleWrite),
+        ("mret", IllegalForm::Mret),
+        ("m-csr", IllegalForm::MCsr),
+        ("sret", IllegalForm::Sret),
+        ("s-csr", IllegalForm::SCsr),
+        ("tvm", IllegalForm::Tvm),
+        ("fpu-off", IllegalForm::FpuOff),
+    ];
+}
+
+impl std::str::FromStr for IllegalForm {
+    type Err = String;
+    fn from_str(value: &str) -> std::result::Result<Self, String> {
+        let name = value.to_ascii_lowercase().replace('_', "-");
+        let names = || Self::ALL.map(|(name, _)| name).join(", ");
+        Self::ALL
+            .iter()
+            .find(|(form, _)| *form == name)
+            .map(|(_, form)| *form)
+            .ok_or_else(|| format!("unknown illegal-instruction form `{value}` (expected one of {})", names()))
+    }
 }
 
 /// `medeleg` bits the generator never sets: `ecall` from S, so S can always
@@ -303,6 +390,14 @@ pub struct Switcher {
     lower_stay: f64,
     /// Probability that an armed vector is in vectored mode.
     vectored_proba: f64,
+    /// BASE alignment of a landing armed in direct and in vectored mode.
+    aligns: [u64; 2],
+    /// Whether the sink handlers' vectors are in vectored mode.
+    sink_vectored: bool,
+    /// Whether landings may read `mtval` and `stval`.
+    tvals: [bool; 2],
+    /// Illegal-instruction forms the target must not be given.
+    no_illegal: Vec<IllegalForm>,
     /// Keys armed in vectored mode, whose landings need more alignment.
     vectored: std::collections::HashSet<usize>,
     lower_modes: bool,
@@ -316,20 +411,37 @@ impl Switcher {
     pub fn new(target: &Target, window: Option<PmpWindow>, rng: &mut (impl Rng + ?Sized)) -> Self {
         let mut cause_weights = [0.0; 12];
         for cause in Cause::ALL {
-            cause_weights[cause as usize] = rng.random::<f64>() + 0.05;
+            let drawn = rng.random::<f64>() + 0.05;
+            cause_weights[cause as usize] = target.trap_weights[cause as usize].unwrap_or(drawn);
         }
         let mut state = PrivState::default();
         if target.has_privilege(S) {
             state.medeleg = random_medeleg(target, rng);
         }
+        // Every probability is drawn even when fixed, so a seed's program
+        // only changes where the option applies.
+        let switch_proba = rng.random_range(0.0..0.3);
+        let config_proba = rng.random_range(0.0..0.1);
+        let descend_share = rng.random_range(0.2..0.8);
+        let lower_stay = rng.random_range(0.25..1.0);
+        let vectored_proba = rng.random_range(0.0..0.5);
+        let modes = &target.tvec_modes;
         Self {
             state,
-            switch_proba: rng.random_range(0.0..0.3),
-            config_proba: rng.random_range(0.0..0.1),
+            switch_proba: target.switch_proba.unwrap_or(switch_proba),
+            config_proba: target.config_proba.unwrap_or(config_proba),
             cause_weights,
-            descend_share: rng.random_range(0.2..0.8),
-            lower_stay: rng.random_range(0.25..1.0),
-            vectored_proba: rng.random_range(0.0..0.5),
+            descend_share,
+            lower_stay,
+            vectored_proba: match (modes.contains(&TvecMode::Direct), modes.contains(&TvecMode::Vectored)) {
+                (true, true) => target.vectored_proba.unwrap_or(vectored_proba),
+                (false, _) => 1.0,
+                (true, false) => 0.0,
+            },
+            aligns: [target.tvec_align, target.vectored_tvec_align],
+            sink_vectored: target.sink_tvec().0,
+            tvals: [target.has_csr(Csr::MTVAL), target.has_csr(Csr::STVAL)],
+            no_illegal: target.disabled_illegal.clone(),
             vectored: Default::default(),
             lower_modes: target.has_privilege(U),
             window,
@@ -479,11 +591,13 @@ impl Switcher {
         let mode = self.state.mode;
         let mut causes: Vec<Cause> = Cause::ALL
             .into_iter()
+            .filter(|cause| self.cause_weights[*cause as usize] > 0.0)
             .filter(|cause| match cause {
                 Cause::EcallU => mode == U,
                 Cause::EcallS => mode == S,
                 Cause::EcallM => mode == M,
-                Cause::Breakpoint | Cause::Illegal => true,
+                Cause::Breakpoint => true,
+                Cause::Illegal => !self.illegal_forms(target).is_empty(),
                 Cause::InstrMisaligned => !target.has(Extension::C),
                 Cause::LoadMisaligned | Cause::StoreMisaligned => {
                     target.misaligned_traps && ctx.mem_bases.misaligned(4, rng).is_some()
@@ -505,6 +619,31 @@ impl Switcher {
             causes.retain(|cause| self.handler(*cause, target) == M);
         }
         causes
+    }
+
+    /// Illegal-instruction forms that trap in the current state.
+    fn illegal_forms(&self, target: &Target) -> Vec<IllegalForm> {
+        use IllegalForm::*;
+        let mode = self.state.mode;
+        let has_s = target.has_privilege(S);
+        let mut forms = vec![Zero, CycleWrite];
+        if mode != M {
+            forms.extend([Mret, MCsr]);
+        }
+        if mode == U && has_s {
+            forms.extend([Sret, SCsr]);
+        }
+        if mode == S && self.state.tsr {
+            forms.push(Sret);
+        }
+        if mode == S && self.state.tvm {
+            forms.push(Tvm);
+        }
+        if !self.state.fs_on && target.has(Extension::F) {
+            forms.push(FpuOff);
+        }
+        forms.retain(|form| !self.no_illegal.contains(form));
+        forms
     }
 
     fn window_lacks(&self, bit: u8) -> bool {
@@ -549,36 +688,31 @@ impl Switcher {
             Cause::InstrMisaligned => bb.instrs.push(Jal { rd: XReg::ZERO, imm: 2 }),
             Cause::Illegal => {
                 let rd = ctx.scratch(rng);
-                let mut options = vec![
-                    // An all-zero word, and a write to the read-only `cycle` (`unimp`).
-                    Raw32 { bits: 0 },
-                    Csrrw { rd: XReg::ZERO, rs1: XReg::ZERO, csr: Csr::CYCLE },
-                ];
-                if mode != M {
-                    options.push(Mret);
-                    options.push(Csrrs { rd, rs1: XReg::ZERO, csr: Csr::MSCRATCH });
-                    options.push(Csrrs { rd, rs1: XReg::ZERO, csr: Csr::MSTATUS });
-                }
-                if mode == U && target.has_privilege(S) {
-                    options.push(Sret);
-                    options.push(Csrrs { rd, rs1: XReg::ZERO, csr: Csr::SSCRATCH });
-                    options.push(Csrrs { rd, rs1: XReg::ZERO, csr: Csr::SEPC });
-                }
-                if mode == S && self.state.tsr {
-                    options.push(Sret);
-                }
-                if mode == S && self.state.tvm {
-                    options.push(SfenceVma { rs1: XReg::ZERO, rs2: XReg::ZERO });
-                    options.push(Csrrs { rd, rs1: XReg::ZERO, csr: Csr::SATP });
-                }
-                if !self.state.fs_on && target.has(Extension::F) {
-                    options.push(Csrrs { rd, rs1: XReg::ZERO, csr: Csr::FCSR });
-                    options.push(FaddS {
-                        rd: crate::riscv::FReg::new(rng.random_range(0..32))?,
-                        rs1: crate::riscv::FReg::new(rng.random_range(0..32))?,
-                        rs2: crate::riscv::FReg::new(rng.random_range(0..32))?,
-                        rm: crate::riscv::RoundingMode::Rne,
-                    });
+                let read = |csr| Csrrs { rd, rs1: XReg::ZERO, csr };
+                let mut options = Vec::new();
+                for form in self.illegal_forms(target) {
+                    match form {
+                        IllegalForm::Zero => options.push(Raw32 { bits: 0 }),
+                        IllegalForm::CycleWrite => {
+                            options.push(Csrrw { rd: XReg::ZERO, rs1: XReg::ZERO, csr: Csr::CYCLE })
+                        }
+                        IllegalForm::Mret => options.push(Mret),
+                        IllegalForm::MCsr => options.extend([read(Csr::MSCRATCH), read(Csr::MSTATUS)]),
+                        IllegalForm::Sret => options.push(Sret),
+                        IllegalForm::SCsr => options.extend([read(Csr::SSCRATCH), read(Csr::SEPC)]),
+                        IllegalForm::Tvm => {
+                            options.extend([SfenceVma { rs1: XReg::ZERO, rs2: XReg::ZERO }, read(Csr::SATP)])
+                        }
+                        IllegalForm::FpuOff => {
+                            options.push(read(Csr::FCSR));
+                            options.push(FaddS {
+                                rd: crate::riscv::FReg::new(rng.random_range(0..32))?,
+                                rs1: crate::riscv::FReg::new(rng.random_range(0..32))?,
+                                rs2: crate::riscv::FReg::new(rng.random_range(0..32))?,
+                                rm: crate::riscv::RoundingMode::Rne,
+                            });
+                        }
+                    }
                 }
                 bb.instrs.push(options[rng.random_range(0..options.len())]);
             }
@@ -689,24 +823,27 @@ impl Switcher {
     /// and the trap value, which is implementation-dependent.
     pub fn land(&mut self, bb: &mut BasicBlock, ctx: &mut Ctx, landing: Landing, rng: &mut (impl Rng + ?Sized)) {
         bb.landing = Some(landing.key);
-        if self.vectored.contains(&landing.key) {
-            bb.align = VECTORED_LANDING_ALIGN;
+        // [`crate::hart::Hart::place`] aligns every landing to 4 bytes already.
+        let align = self.aligns[usize::from(self.vectored.contains(&landing.key))];
+        if align > 4 {
+            bb.align = align;
         }
+        let sink = self.sink_vectored;
         let (cause, epc, tval) = if landing.handler == M {
-            ctx.point(bb, Csr::MTVEC, Dest::Landing { key: SINK_M, fallback: SINK_M }, false, rng);
+            ctx.point(bb, Csr::MTVEC, Dest::Landing { key: SINK_M, fallback: SINK_M }, sink, rng);
             self.state.mtvec = None;
             if self.state.stvec.take().is_some() {
-                ctx.point(bb, Csr::STVEC, Dest::Landing { key: SINK_S, fallback: SINK_S }, false, rng);
+                ctx.point(bb, Csr::STVEC, Dest::Landing { key: SINK_S, fallback: SINK_S }, sink, rng);
             }
-            (Csr::MCAUSE, Csr::MEPC, Csr::MTVAL)
+            (Csr::MCAUSE, Csr::MEPC, self.tvals[0].then_some(Csr::MTVAL))
         } else {
-            ctx.point(bb, Csr::STVEC, Dest::Landing { key: SINK_S, fallback: SINK_S }, false, rng);
+            ctx.point(bb, Csr::STVEC, Dest::Landing { key: SINK_S, fallback: SINK_S }, sink, rng);
             self.state.stvec = None;
-            (Csr::SCAUSE, Csr::SEPC, Csr::STVAL)
+            (Csr::SCAUSE, Csr::SEPC, self.tvals[1].then_some(Csr::STVAL))
         };
         ctx.read(bb, cause, true, rng);
         ctx.read(bb, epc, true, rng);
-        if rng.random_bool(0.5) {
+        if let Some(tval) = tval.filter(|_| rng.random_bool(0.5)) {
             ctx.read(bb, tval, false, rng);
         }
     }

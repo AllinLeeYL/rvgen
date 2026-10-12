@@ -255,27 +255,43 @@ impl Hart {
         let before_handler = start_len
             + code_size(&self.bbs[1].instrs)
             + epilogue.iter().map(|bb| code_size(&bb.instrs)).sum::<usize>();
-        let mut padding = Vec::new();
-        if before_handler % 4 != 0 {
-            // Only reachable with C enabled; never executed.
-            padding.push(Instruction::cnop());
-        }
+        // The sink handlers sit where their vectors' BASE can point: this
+        // code starts at the RAM base. The padding is never executed.
+        let (sink_vectored, sink_align) = target.sink_tvec();
+        let code_start = target.physical_memory.start as usize;
+        let pad_to_sink = |offset: usize| {
+            let bytes = (code_start + offset).next_multiple_of(sink_align as usize) - code_start - offset;
+            // An odd halfword count is only reachable with C enabled.
+            let mut padding = vec![Instruction::nop(); bytes / 4];
+            if bytes % 4 != 0 {
+                padding.push(Instruction::cnop());
+            }
+            padding
+        };
+        let padding = pad_to_sink(before_handler);
         let handler_offset = before_handler + code_size(&padding);
         epilogue.push(BasicBlock {
             instrs: padding,
             ..Default::default()
         });
         let handler = trap_handler(tohost, target.xlen);
-        // Every handler instruction is 4 bytes, so the next handler is aligned too.
-        let strap_offset = handler_offset + code_size(&handler);
+        let handler_end = handler_offset + code_size(&handler);
         epilogue.push(BasicBlock {
             instrs: handler,
             label: Some(TRAP_HANDLER_LABEL.into()),
             landing: Some(SINK_M),
             ..Default::default()
         });
-        self.bbs[0].instrs = set_tvec(Csr::MTVEC, handler_offset as i64).to_vec();
+        // The MODE bit rides in the aligned address's low bit.
+        let mode = i64::from(sink_vectored);
+        self.bbs[0].instrs = set_tvec(Csr::MTVEC, handler_offset as i64 + mode).to_vec();
         if has_s {
+            let padding = pad_to_sink(handler_end);
+            let strap_offset = handler_end + code_size(&padding);
+            epilogue.push(BasicBlock {
+                instrs: padding,
+                ..Default::default()
+            });
             epilogue.push(BasicBlock {
                 instrs: strap_handler(tohost, target.xlen),
                 label: Some(STRAP_HANDLER_LABEL.into()),
@@ -283,7 +299,7 @@ impl Hart {
                 ..Default::default()
             });
             let at = code_size(&self.bbs[0].instrs);
-            self.bbs[0].instrs.extend(set_tvec(Csr::STVEC, (strap_offset - at) as i64));
+            self.bbs[0].instrs.extend(set_tvec(Csr::STVEC, (strap_offset - at) as i64 + mode));
         }
         // The epilogue follows `_init`, each block right after the previous one.
         let mut prev = 1;

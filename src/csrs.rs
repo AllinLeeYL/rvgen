@@ -35,6 +35,70 @@ pub const MAX_PMP_REGIONS: usize = 16;
 /// First and last HPM counter / event selector index.
 const HPM: std::ops::RangeInclusive<u16> = 3..=31;
 
+/// An inclusive range of CSR addresses, parsed from a name (`mcountinhibit`,
+/// `mhpmevent7`), a group (`mhpmevent`, `mhpmcounter`, `pmpaddr`, `pmpcfg`),
+/// an address (`0x320`) or an address range (`0x323-0x33f`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CsrRange {
+    pub first: u16,
+    pub last: u16,
+}
+
+impl CsrRange {
+    pub fn contains(&self, csr: Csr) -> bool {
+        (self.first..=self.last).contains(&csr.index())
+    }
+}
+
+/// Names of the CSRs generated code accesses on its own; an indexed family
+/// gives its base address and index range.
+const CSR_NAMES: &[(&str, u16)] = &[
+    ("fflags", 0x001), ("frm", 0x002), ("fcsr", 0x003),
+    ("sscratch", 0x140), ("sepc", 0x141), ("scause", 0x142), ("stval", 0x143), ("scounteren", 0x106),
+    ("medeleg", 0x302), ("mideleg", 0x303), ("mcounteren", 0x306), ("mcountinhibit", 0x320),
+    ("mscratch", 0x340), ("mepc", 0x341), ("mcause", 0x342), ("mtval", 0x343),
+    ("mcycle", 0xb00), ("minstret", 0xb02),
+];
+const CSR_FAMILIES: &[(&str, u16, std::ops::RangeInclusive<u16>)] = &[
+    ("mhpmevent", 0x320, HPM),
+    ("mhpmcounter", 0xb00, HPM),
+    ("pmpaddr", 0x3b0, 0..=63),
+    ("pmpcfg", 0x3a0, 0..=15),
+];
+
+impl std::str::FromStr for CsrRange {
+    type Err = String;
+    fn from_str(value: &str) -> std::result::Result<Self, String> {
+        let value = value.trim().to_ascii_lowercase();
+        let address = |text: &str| {
+            let parsed = match text.strip_prefix("0x") {
+                Some(hex) => u16::from_str_radix(hex, 16),
+                None => text.parse(),
+            };
+            parsed.ok().filter(|address| *address < 4096)
+        };
+        if let Some(&(_, address)) = CSR_NAMES.iter().find(|(name, _)| *name == value) {
+            return Ok(Self { first: address, last: address });
+        }
+        for (family, base, indices) in CSR_FAMILIES {
+            match value.strip_prefix(family) {
+                Some("") => return Ok(Self { first: base + indices.start(), last: base + indices.end() }),
+                Some(index) => {
+                    if let Some(index) = index.parse().ok().filter(|index| indices.contains(index)) {
+                        return Ok(Self { first: base + index, last: base + index });
+                    }
+                }
+                None => {}
+            }
+        }
+        let (first, last) = value.split_once('-').unwrap_or((&value, &value));
+        match (address(first), address(last)) {
+            (Some(first), Some(last)) if first <= last => Ok(Self { first, last }),
+            _ => Err(format!("unknown CSR `{value}` (expected a name, an address or FIRST-LAST)")),
+        }
+    }
+}
+
 /// Whether a read of the CSR can be compared against Spike.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Read {
@@ -134,6 +198,7 @@ pub fn workload_csrs(target: &Target) -> Vec<WorkloadCsr> {
             csrs.push(clobbered(csr, 1.0));
         }
     }
+    csrs.retain(|csr| target.has_csr(csr.csr));
     csrs
 }
 
@@ -200,6 +265,7 @@ pub fn init_csrs(
         }
     }
     csrs.extend(pmp(target, window, rng));
+    csrs.retain(|(csr, _)| target.has_csr(*csr));
     csrs
 }
 

@@ -41,6 +41,10 @@ Configure a batch of programs:
 - `--ram-base`, `--ram-size`: allocation bounds (default: `0x80000000`, `0x08000000`).
 - `--scratch-size`: data section size in bytes (default: drawn per program,
   log-uniformly between 4 KiB and 1 MiB, see [Memory accesses](#memory-accesses)).
+- `--code-area-size`: code area size in bytes (default: drawn per program,
+  log-uniformly between four times the code, at least 16 KiB, and 1 MiB or the
+  RAM left below the data). A fixed size only has to hold the code; a small
+  one keeps the image short for targets that load it slowly (Sodor over TSI).
 - `--smc-proba`: probability that a workload block is self-modifying (default:
   `0.1`; needs `zifencei` in `--isa`, otherwise no block is): earlier code
   stores its bytes, often over a block that already ran, and a `fence.i`
@@ -54,6 +58,32 @@ Configure a batch of programs:
   delegates too take effect the same on both; a mismatch fails generation.
 - `--misaligned-traps`: the device traps on misaligned loads and stores, so
   they are raised on purpose (default: off).
+- `--tvec-modes`: trap vector modes `mtvec`/`stvec` implement, `direct`,
+  `vectored` or both (default: `direct,vectored`). With one, every vector is
+  written in that mode, the sink handlers' included (Ibex: `vectored`).
+- `--tvec-align`, `--vectored-tvec-align`: alignment in bytes the device
+  forces on a vector's BASE in direct and in vectored mode (default: `4`,
+  `256`); landings and sink handlers are aligned to it.
+- `--vectored-proba`, `--switch-proba`, `--config-proba`: fix what each
+  program otherwise draws: how often a vector is armed in vectored mode
+  (0–0.5), a block ends with a privilege switch (0–0.3) or changes the
+  privileged configuration (0–0.1). `--switch-proba 0 --config-proba 0` keeps
+  the hart in M with no planned trap.
+- `--trap-weight CAUSE=W`: relative weight of a planned trap's cause; `0`
+  never raises it, and causes not named draw a weight per program. Causes:
+  `instr-misaligned`, `instr-access`, `illegal`, `breakpoint`,
+  `load-misaligned`, `load-access`, `store-misaligned`, `store-access`,
+  `ecall-u`, `ecall-s`, `ecall-m`. `ecall-u` and `ecall-s` cannot be `0`:
+  they bring the hart back to M.
+- `--disabled-illegal`: instructions a planned illegal-instruction trap must
+  not use, where the device does not trap on them as Spike does: `zero`,
+  `cycle-write`, `mret`, `m-csr`, `sret`, `s-csr`, `tvm`, `fpu-off` (see
+  [Privilege modes](#privilege-modes); Sodor accepts a write to `cycle`).
+- `--disabled-csrs`: CSRs the device does not implement, which no generated
+  code then accesses: names (`mcountinhibit`, `mhpmevent7`; `mhpmevent`,
+  `mhpmcounter`, `pmpaddr` and `pmpcfg` name all of theirs), addresses
+  (`0x320`) or address ranges (`0x323-0x33f`). `mscratch`, `mepc`, `mcause`,
+  `sepc` and `scause` cannot be disabled.
 - `-o`, `--output`: output file for `one` (default: `rvprog.elf`) or
   output directory for `many` (default: `rvprogs`).
 - `--spike`: Spike executable used for the self-check (default: `spike`).
@@ -252,7 +282,9 @@ landing of the trap that eventually returns to M, entering U arms `stvec` too
 for traps `medeleg` hands to S, and a trap handled in the current mode arms
 that mode's vector right before, in vectored mode at a per-program rate
 (exceptions still go to BASE, but some cores ignore BASE's low bits then, so
-those landings are 256-byte aligned). The vectors and exception PCs are value
+those landings are 256-byte aligned). `--tvec-modes`, `--tvec-align` and
+`--vectored-tvec-align` describe what the device's vectors accept, and
+`--vectored-proba` fixes the rate. The vectors and exception PCs are value
 sites, entangled like `jalr` targets. A landing's cause and exception PC fold into the
 next guard: a trap that comes early, late or from the wrong instruction lands
 with values Spike did not see. A disarmed vector points at the mode's sink
@@ -277,7 +309,15 @@ entries hold random permissions, below the entry giving S and U all memory.
 Other switches, at block ends: switch the FPU off or back on (`mstatus.FS`,
 `sstatus.FS` in S; the workload then draws no FP instruction), toggle
 `mstatus.TSR` and `mstatus.TVM`, or rewrite `medeleg`. Each program draws how
-often blocks switch, how often a switch descends, and each cause's weight.
+often blocks switch, how often a switch descends, and each cause's weight;
+`--switch-proba`, `--config-proba` and `--trap-weight` fix them, to describe a
+device or to isolate the switch a device fails on.
+
+A device that deviates from Spike is described with options rather than by
+turning switches off: which `medeleg` bits exist (`--medeleg-mask`), how many
+PMP entries (`--pmp-regions`), which CSRs are missing (`--disabled-csrs`),
+what its trap vectors accept (`--tvec-modes`), and whether misaligned accesses
+trap (`--misaligned-traps`).
 
 ## Memory accesses
 
