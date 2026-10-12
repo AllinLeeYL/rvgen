@@ -58,6 +58,9 @@ Configure a batch of programs:
   delegates too take effect the same on both; a mismatch fails generation.
 - `--misaligned-traps`: the device traps on misaligned loads and stores, so
   they are raised on purpose (default: off).
+- `--smc-aligned-stores`: SMC code is stored with naturally aligned stores
+  only, as with `--misaligned-traps` (default: off). For a device that
+  neither traps on misaligned stores nor supports them (Ibex's Chipyard tile).
 - `--tvec-modes`: trap vector modes `mtvec`/`stvec` implement, `direct`,
   `vectored` or both (default: `direct,vectored`). With one, every vector is
   written in that mode, the sink handlers' included (Ibex: `vectored`).

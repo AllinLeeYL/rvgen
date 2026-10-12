@@ -81,6 +81,11 @@ pub struct CommonOpts {
     #[arg(long)]
     pub misaligned_traps: bool,
 
+    // Self-modifying code is stored with naturally aligned stores only, for
+    // a device that neither traps on nor supports misaligned stores.
+    #[arg(long)]
+    pub smc_aligned_stores: bool,
+
     // Trap vector modes `mtvec`/`stvec` implement: `direct`, `vectored` or
     // both. With one, every vector is written in that mode, the sink
     // handlers' included (Ibex is vectored only).

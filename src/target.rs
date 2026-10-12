@@ -41,6 +41,10 @@ pub struct Target {
     /// purpose. False by default.
     pub misaligned_traps: bool,
 
+    /// Whether SMC stores stay naturally aligned even though misaligned
+    /// stores do not trap. False by default.
+    pub smc_aligned_stores: bool,
+
     /// Probability that a workload block is self-modifying (see
     /// [`crate::hart::Hart::plan_smc`]). 0 by default.
     pub smc_proba: f64,
@@ -124,6 +128,7 @@ impl Target {
             pmp_regions,
             medeleg_mask: 0,
             misaligned_traps: false,
+            smc_aligned_stores: false,
             smc_proba: 0.0,
             code_area_size: None,
             tvec_modes: [TvecMode::Direct, TvecMode::Vectored].into(),

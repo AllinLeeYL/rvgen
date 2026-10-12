@@ -60,7 +60,7 @@ fresh mode otherwise.
   would see different registers. `rptr` holds an address, which is the same
   in both.
 - **Store widths:** each chunk's width is drawn from `{1, 2, 4}` bytes, so
-  partial writes get exercised. With `--misaligned-traps`, widths are limited
+  partial writes get exercised. With `--misaligned-traps` or `--smc-aligned-stores`, widths are limited
   to `unit = target.instruction_alignment()` at naturally aligned offsets, so
   no store traps. Otherwise any width goes at any offset: stores are
   misaligned and straddle instructions, and Spike gets `zicclsm`.

@@ -290,6 +290,7 @@ fn generate_with(opts: &CommonOpts) -> Result<(Orchestrator, Vec<u8>)> {
     target.code_area_size = opts.code_area_size;
     target.medeleg_mask = opts.medeleg_mask;
     target.misaligned_traps = opts.misaligned_traps;
+    target.smc_aligned_stores = opts.smc_aligned_stores;
     ensure!(!opts.tvec_modes.is_empty(), "--tvec-modes needs direct, vectored or both");
     target.tvec_modes = opts.tvec_modes.iter().copied().collect();
     for (flag, align) in [("--tvec-align", opts.tvec_align), ("--vectored-tvec-align", opts.vectored_tvec_align)] {
@@ -406,6 +407,29 @@ mod tests {
             }
         }
         assert!(fresh > 0 && aliased > 0 && misaligned > 0, "fresh {fresh}, aliased {aliased}, misaligned {misaligned}");
+    }
+
+    /// `--smc-aligned-stores` keeps every SMC store naturally aligned.
+    #[test]
+    fn smc_stores_can_stay_aligned() {
+        let mut opts = CommonOpts::default();
+        opts.isa = vec![I, M, C, Zicsr, Zifencei];
+        opts.num_instrs = 2000;
+        opts.smc_proba = 0.3;
+        opts.smc_aligned_stores = true;
+        opts.seed = Some(0);
+        let (orchestrator, _) = generate_with(&opts).unwrap();
+        let hart = &orchestrator.harts[0];
+        let mut stores = 0;
+        for store in hart.bbs.iter().flat_map(|bb| &bb.smc_stores) {
+            let mut addr = hart.bbs[store.smc].addr as usize;
+            for width in &store.widths {
+                assert_eq!(addr % width, 0, "misaligned SMC store");
+                addr += width;
+                stores += 1;
+            }
+        }
+        assert!(stores > 0, "no SMC store");
     }
 
     /// A vectored-only target (Ibex) reaches every landing and sink handler
