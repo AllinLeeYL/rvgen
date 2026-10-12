@@ -59,10 +59,11 @@ fresh mode otherwise.
   differs between the draft and the final program, and every later probe
   would see different registers. `rptr` holds an address, which is the same
   in both.
-- **Store widths:** each chunk's width is drawn from `{1, 2, 4}` bytes, limited
-  to `unit = target.instruction_alignment()`, at a naturally aligned offset.
-  Stores are therefore aligned even when misaligned accesses trap, and
-  partial writes get exercised.
+- **Store widths:** each chunk's width is drawn from `{1, 2, 4}` bytes, so
+  partial writes get exercised. With `--misaligned-traps`, widths are limited
+  to `unit = target.instruction_alignment()` at naturally aligned offsets, so
+  no store traps. Otherwise any width goes at any offset: stores are
+  misaligned and straddle instructions, and Spike gets `zicclsm`.
 - **`S` is at most 2 KiB**, the reach of the 12-bit store offset. A larger block
   is unmarked.
 - **`.text` becomes RWX.** The reserved `smc` section is dropped: it sits at

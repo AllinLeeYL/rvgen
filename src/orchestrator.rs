@@ -378,7 +378,7 @@ mod tests {
     /// block's code is absent from the image: stale bytes sit at its address.
     #[test]
     fn smc_blocks_are_stored_at_run_time() {
-        let (mut fresh, mut aliased) = (0, 0);
+        let (mut fresh, mut aliased, mut misaligned) = (0, 0, 0);
         for (seed, isa) in (0..12).zip([vec![I, M, C, Zicsr, Zifencei], vec![I, M, A, Zicsr, Zifencei]].iter().cycle()) {
             let mut opts = CommonOpts::default();
             opts.isa = isa.clone();
@@ -396,8 +396,16 @@ mod tests {
                 assert_ne!(&text[at..at + code.len()], &code[..], "SMC block shipped in the image");
                 if bb.alias.is_some() { aliased += 1 } else { fresh += 1 }
             }
+            // Misaligned stores do not trap by default, so some are.
+            for store in hart.bbs.iter().flat_map(|bb| &bb.smc_stores) {
+                let mut addr = hart.bbs[store.smc].addr as usize;
+                for width in &store.widths {
+                    misaligned += (addr % width != 0) as usize;
+                    addr += width;
+                }
+            }
         }
-        assert!(fresh > 0 && aliased > 0, "fresh {fresh}, aliased {aliased}");
+        assert!(fresh > 0 && aliased > 0 && misaligned > 0, "fresh {fresh}, aliased {aliased}, misaligned {misaligned}");
     }
 
     /// A vectored-only target (Ibex) reaches every landing and sink handler

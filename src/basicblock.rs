@@ -271,15 +271,15 @@ impl SmcStore {
     }
 }
 
-/// Store widths covering `size` bytes at an address aligned to `unit`, each
-/// naturally aligned, mixed at random.
-pub fn store_widths(size: usize, unit: usize, rng: &mut (impl Rng + ?Sized)) -> Vec<usize> {
+/// Store widths covering `size` bytes at an address aligned to `unit`, mixed
+/// at random: each naturally aligned, or at any offset when `misaligned`.
+pub fn store_widths(size: usize, unit: usize, misaligned: bool, rng: &mut (impl Rng + ?Sized)) -> Vec<usize> {
     let mut widths = Vec::new();
     let mut off = 0;
     while off < size {
         let fits: Vec<_> = [1, 2, 4]
             .into_iter()
-            .filter(|&width| width <= unit && off % width == 0 && off + width <= size)
+            .filter(|&width| off + width <= size && (misaligned || (width <= unit && off % width == 0)))
             .collect();
         let width = fits[rng.random_range(0..fits.len())];
         widths.push(width);

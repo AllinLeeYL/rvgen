@@ -206,6 +206,10 @@ impl Target {
                 isa.push_str(name);
             }
         }
+        // Spike traps on misaligned loads and stores without it.
+        if !self.misaligned_traps {
+            isa.push_str("_zicclsm");
+        }
         isa
     }
 

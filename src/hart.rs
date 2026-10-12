@@ -368,7 +368,7 @@ impl Hart {
                 .collect();
             let rptr = regs.swap_remove(rng.random_range(0..regs.len()));
             let rval = regs.swap_remove(rng.random_range(0..regs.len()));
-            let store = SmcStore { at: 0, smc, rptr, rval, widths: store_widths(size, unit, rng) };
+            let store = SmcStore { at: 0, smc, rptr, rval, widths: store_widths(size, unit, !target.misaligned_traps, rng) };
             // The fence goes in first: in the same block, the store precedes it.
             self.bbs[fence].prepend(&[Instruction::FenceI]);
             self.bbs[host].prepend(&vec![Instruction::nop(); store.len()]);
