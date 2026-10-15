@@ -328,7 +328,7 @@ fn below_ram(target: &Target, rng: &mut (impl Rng + ?Sized)) -> (u64, u8) {
     }
     // NAPOT over 2^(k + 3) bytes: k trailing ones, the range below `limit`.
     let max = (limit >> 3).ilog2();
-    let k = rng.random_range(0..max);
+    let k = rng.random_range(0..max.max(1)); // RAM based below 32 leaves room for k = 0 only
     (addr >> 1 >> k << 1 << k | ((1 << k) - 1), cfg)
 }
 

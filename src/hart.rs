@@ -1043,4 +1043,24 @@ mod tests {
             crate::orchestrator::generate(&opts).unwrap();
         }
     }
+
+    #[test]
+    fn ram_based_below_32_generates() {
+        use crate::options::CommonOpts;
+        for seed in 0..50 {
+            let mut opts = CommonOpts::default();
+            (opts.ram_base, opts.ram_size) = (16, 0x40_0000);
+            opts.no_self_check = true;
+            opts.seed = Some(seed);
+            crate::orchestrator::generate(&opts).unwrap();
+        }
+    }
+
+    #[test]
+    fn misaligned_ram_base_is_rejected() {
+        let mut opts = crate::options::CommonOpts::default();
+        opts.ram_base = 0x8000_0002;
+        let error = crate::orchestrator::generate(&opts).unwrap_err();
+        assert_eq!(error.to_string(), "--ram-base must be a multiple of 4");
+    }
 }

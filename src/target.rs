@@ -90,6 +90,10 @@ impl Target {
     ) -> Result<Self> {
         let mut extensions: HashSet<_> = extensions.into_iter().collect();
         ensure!(
+            physical_memory.start % 4 == 0,
+            "--ram-base must be a multiple of 4"
+        );
+        ensure!(
             extensions.contains(&Extension::I),
             "the target requires the I base ISA"
         );
